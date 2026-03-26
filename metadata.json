@@ -1,0 +1,5 @@
+{
+  "name": "Garud Automobiles Script Viewer",
+  "description": "A high-energy storyboard and script viewer for Garud Automobiles commercial launch, featuring Odiya dialect and real-time AI voice interaction.",
+  "requestFramePermissions": ["microphone"]
+}

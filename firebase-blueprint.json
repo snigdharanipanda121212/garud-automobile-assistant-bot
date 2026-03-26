@@ -1,0 +1,60 @@
+{
+  "entities": {
+    "Script": {
+      "title": "Script",
+      "description": "A commercial script for Garud Automobiles",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "Title of the script" },
+        "content": { "type": "string", "description": "The script content in Odiya" },
+        "englishTranslation": { "type": "string", "description": "English translation" },
+        "status": { "type": "string", "enum": ["draft", "approved", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "authorId": { "type": "string" }
+      },
+      "required": ["title", "content", "createdAt", "authorId"]
+    },
+    "User": {
+      "title": "User",
+      "description": "A user of the application",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["admin", "viewer"] },
+        "photoURL": { "type": "string" }
+      },
+      "required": ["displayName", "email", "role"]
+    },
+    "Vehicle": {
+      "title": "Vehicle",
+      "description": "A vehicle in the Garud EVCO range",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "price": { "type": "string" },
+        "model": { "type": "string" },
+        "range": { "type": "string" },
+        "batteryWarranty": { "type": "string" },
+        "vehicleWarranty": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "price", "model", "range", "batteryWarranty", "vehicleWarranty"]
+    }
+  },
+  "firestore": {
+    "/scripts/{scriptId}": {
+      "schema": "Script",
+      "description": "Collection of scripts"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of users"
+    },
+    "/vehicles/{vehicleId}": {
+      "schema": "Vehicle",
+      "description": "Collection of vehicles"
+    }
+  }
+}

@@ -1,0 +1,118 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: userId
+    // Fields:
+    //   - displayName: string (required)
+    //   - email: string (required, email format)
+    //   - role: string (required, 'admin' or 'viewer')
+    //   - photoURL: string (optional)
+    //
+    // Collection: scripts
+    // Document ID: scriptId
+    // Fields:
+    //   - title: string (required)
+    //   - content: string (required)
+    //   - englishTranslation: string (optional)
+    //   - status: string (required, 'draft', 'approved', 'rejected')
+    //   - createdAt: timestamp (required)
+    //   - authorId: string (required)
+    //
+    // Collection: vehicles
+    // Document ID: vehicleId
+    // Fields:
+    //   - name: string (required)
+    //   - price: string (required)
+    //   - model: string (required)
+    //   - range: string (required)
+    //   - batteryWarranty: string (required)
+    //   - vehicleWarranty: string (required)
+    //   - imageUrl: string (optional)
+    //   - createdAt: timestamp (optional)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "sarita.riusriu121212@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // Domain Validators
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['displayName', 'email', 'role', 'photoURL']) &&
+             data.displayName is string && data.displayName.size() > 0 && data.displayName.size() < 100 &&
+             isValidEmail(data.email) &&
+             data.role in ['admin', 'viewer'];
+    }
+
+    function isValidScript(data) {
+      return hasOnlyAllowedFields(['title', 'content', 'englishTranslation', 'status', 'createdAt', 'authorId']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.content is string && data.content.size() > 0 && data.content.size() < 10000 &&
+             data.status in ['draft', 'approved', 'rejected'] &&
+             data.createdAt is timestamp &&
+             data.authorId is string;
+    }
+
+    function isValidVehicle(data) {
+      return hasOnlyAllowedFields(['name', 'price', 'model', 'range', 'batteryWarranty', 'vehicleWarranty', 'imageUrl', 'createdAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.price is string && data.price.size() > 0 && data.price.size() < 50 &&
+             data.model is string && data.model.size() > 0 && data.model.size() < 50 &&
+             data.range is string && data.range.size() > 0 && data.range.size() < 50 &&
+             data.batteryWarranty is string && data.batteryWarranty.size() > 0 && data.batteryWarranty.size() < 50 &&
+             data.vehicleWarranty is string && data.vehicleWarranty.size() > 0 && data.vehicleWarranty.size() < 50 &&
+             (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() < 1000000)) &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) && request.resource.data.role == 'viewer' || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) && request.resource.data.role == resource.data.role || isAdmin());
+    }
+
+    match /scripts/{scriptId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidScript(request.resource.data) && (request.resource.data.authorId == request.auth.uid || isAdmin());
+      allow update: if isAuthenticated() && isValidScript(request.resource.data) && (resource.data.authorId == request.auth.uid || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /vehicles/{vehicleId} {
+      allow read: if true; // Public catalog
+      allow create: if isAdmin() && isValidVehicle(request.resource.data);
+      allow update: if isAdmin() && isValidVehicle(request.resource.data);
+      allow delete: if isAdmin();
+    }
+  }
+}
