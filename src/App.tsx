@@ -1337,7 +1337,6 @@ function AppContent() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const [isOwner, setIsOwner] = useState(false);
-  const [hasApiKey, setHasApiKey] = useState(true);
   const [transcription, setTranscription] = useState<string[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>(INITIAL_VEHICLES);
   const [selectedVehicleForQuotation, setSelectedVehicleForQuotation] = useState<Vehicle | null>(null);
@@ -1353,14 +1352,6 @@ function AppContent() {
   // Auth & Role Sync
   useEffect(() => {
     testConnection();
-    
-    const checkKey = async () => {
-      if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
-        const has = await window.aistudio.hasSelectedApiKey();
-        setHasApiKey(has);
-      }
-    };
-    checkKey();
     
     // Load saved owner status
     const savedOwner = localStorage.getItem('garud_is_owner');
@@ -1500,9 +1491,9 @@ function AppContent() {
   const currentScene = COMMERCIAL_SCRIPT[currentSceneIndex];
 
   // Live API Refs
-  const sessionRef = useRef<any>(null);
+  const chatSessionRef = useRef<any>(null);
+  const recognitionRef = useRef<any>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   const nextScene = () => {
@@ -1611,19 +1602,14 @@ function AppContent() {
     draw();
   };
 
-  const startLiveSession = async () => {
-    if (sessionRef.current) return sessionRef.current;
-    if (isConnecting) {
-      // Wait for existing connection attempt
-      while (isConnecting) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        if (sessionRef.current) return sessionRef.current;
-      }
-    }
+  const [chatSession, setChatSession] = useState<any>(null);
+
+  const getChatSession = async () => {
+    if (chatSession) return chatSession;
     
     try {
       setIsConnecting(true);
-      const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+      const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
         setTranscription(prev => [...prev, "Error: GEMINI_API_KEY is not configured."]);
         setIsConnecting(false);
@@ -1631,209 +1617,71 @@ function AppContent() {
       }
 
       const ai = new GoogleGenAI({ apiKey });
-      
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      }
-      
-      if (audioContextRef.current.state === 'suspended') {
-        await audioContextRef.current.resume();
-      }
-
-      const contextSampleRate = audioContextRef.current.sampleRate;
-      streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      const source = audioContextRef.current.createMediaStreamSource(streamRef.current);
-      
-      // Setup Analyser for visualizer
-      analyserRef.current = audioContextRef.current.createAnalyser();
-      analyserRef.current.fftSize = 256;
-      source.connect(analyserRef.current);
-      drawVisualizer();
-
-      processorRef.current = audioContextRef.current.createScriptProcessor(2048, 1, 1);
-
-      const gainNode = audioContextRef.current.createGain();
-      gainNode.gain.value = 0;
-
-      const session = await ai.live.connect({
-        model: "gemini-3.1-flash-live-preview",
-        callbacks: {
-          onopen: () => {
-            setIsRecording(true);
-            setIsConnecting(false);
-            source.connect(processorRef.current!);
-            processorRef.current!.connect(gainNode);
-            gainNode.connect(audioContextRef.current!.destination);
-            
-            processorRef.current!.onaudioprocess = (e) => {
-              const inputData = e.inputBuffer.getChannelData(0);
-              
-              // Resample to 16000 if needed
-              let resampledData: Float32Array;
-              if (contextSampleRate !== 16000) {
-                const ratio = contextSampleRate / 16000;
-                const newLength = Math.round(inputData.length / ratio);
-                resampledData = new Float32Array(newLength);
-                for (let i = 0; i < newLength; i++) {
-                  resampledData[i] = inputData[Math.round(i * ratio)];
-                }
-              } else {
-                resampledData = inputData;
-              }
-
-              const pcmData = new Int16Array(resampledData.length);
-              for (let i = 0; i < resampledData.length; i++) {
-                pcmData[i] = Math.max(-1, Math.min(1, resampledData[i])) * 0x7FFF;
-              }
-              const base64Data = arrayBufferToBase64(pcmData.buffer);
-              
-              if (sessionRef.current) {
-                sessionRef.current.sendRealtimeInput({
-                  audio: { data: base64Data, mimeType: 'audio/pcm;rate=16000' }
-                });
-              }
-            };
-          },
-          onmessage: async (message: any) => {
-            // Handle interruptions
-            if (message.serverContent?.interrupted) {
-              stopPlayback();
-            }
-
-            // Handle tool calls
-            if (message.serverContent?.modelTurn?.parts) {
-              for (const part of message.serverContent.modelTurn.parts) {
-                if (part.call) {
-                  const { name, args } = part.call;
-                  if (name === 'compareVehicles') {
-                    const ids = args.vehicleIds as string[];
-                    const toCompare = INITIAL_VEHICLES.filter(v => ids.includes(v.id));
-                    if (toCompare.length > 0) {
-                      setComparisonVehicles(toCompare);
-                      // Send response back to AI
-                      session.sendToolResponse({
-                        functionResponses: [{
-                          name: 'compareVehicles',
-                          response: { success: true, message: `Comparing ${toCompare.length} vehicles.` },
-                          id: part.call.id
-                        }]
-                      });
-                    }
-                  }
-                }
-              }
-            }
-
-            // Handle model turn parts (text and audio)
-            if (message.serverContent?.modelTurn?.parts) {
-              for (const part of message.serverContent.modelTurn.parts) {
-                if (part.text) {
-                  setTranscription(prev => [...prev.slice(-10), `AI: ${part.text}`]);
-                }
-                if (part.inlineData?.data) {
-                  const base64Audio = part.inlineData.data;
-                  const binaryString = atob(base64Audio);
-                  const bytes = new Uint8Array(binaryString.length);
-                  for (let i = 0; i < binaryString.length; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                  }
-                  const pcmData = new Int16Array(bytes.buffer, 0, Math.floor(bytes.byteLength / 2));
-                  const floatData = new Float32Array(pcmData.length);
-                  for (let i = 0; i < pcmData.length; i++) {
-                    floatData[i] = pcmData[i] / 32768.0;
-                  }
-
-                  audioQueueRef.current.push(floatData);
-                  playNextInQueue();
-                }
-              }
-            }
-            
-            // Handle real-time transcription
-            if (message.serverContent?.outputAudioTranscription) {
-              const text = message.serverContent.outputAudioTranscription.text;
-              if (text) {
-                setTranscription(prev => {
-                  const last = prev[prev.length - 1];
-                  if (last?.startsWith('AI:')) {
-                    return [...prev.slice(0, -1), `AI: ${text}`];
-                  }
-                  return [...prev, `AI: ${text}`];
-                });
-              }
-            }
-            
-            if (message.serverContent?.inputAudioTranscription) {
-              const text = message.serverContent.inputAudioTranscription.text;
-              if (text) {
-                setTranscription(prev => {
-                  const last = prev[prev.length - 1];
-                  if (last?.startsWith('You:')) {
-                    return [...prev.slice(0, -1), `You: ${text}`];
-                  }
-                  return [...prev, `You: ${text}`];
-                });
-              }
-            }
-          },
-          onclose: () => {
-            setIsRecording(false);
-            setIsConnecting(false);
-            sessionRef.current = null;
-            audioQueueRef.current = [];
-            isPlayingRef.current = false;
-            if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-          },
-          onerror: (e) => {
-            console.error("Live API Error:", e);
-            const errorMsg = e instanceof Error ? e.message : String(e);
-            if (errorMsg.includes("permission") || errorMsg.includes("not found")) {
-              setHasApiKey(false);
-            }
-            setTranscription(prev => [...prev, `Error: ${errorMsg}`]);
-            setIsConnecting(false);
-            stopLiveSession();
-          },
-        },
+      const chat = ai.chats.create({
+        model: "gemini-3-flash-preview",
         config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: selectedVoice } },
-          },
-          tools: [
-            { googleSearch: {} },
-            {
-              functionDeclarations: [{
-                name: "compareVehicles",
-                description: "Compare two or more Garud vehicles side-by-side to show specifications.",
-                parameters: {
-                  type: Type.OBJECT,
-                  properties: {
-                    vehicleIds: {
-                      type: Type.ARRAY,
-                      items: { type: Type.STRING },
-                      description: "List of vehicle IDs to compare. Available IDs: 1 (Passenger Special), 2 (Cargo Pro)."
-                    }
-                  },
-                  required: ["vehicleIds"]
-                }
-              }]
-            }
-          ],
-          systemInstruction: "You are an expert on Garud Automobiles. You MUST respond primarily in Berhampur Odiya (Ganjami dialect) to make the local customers feel at home, but you can use English if the customer prefers. You are helpful, persuasive, and professional. ONLY answer questions about Garud vehicles (L-5, L-3 models), their 200km range, 3-year battery warranty, and exchange offers. Use Google Search for up-to-date EV trends. Use the compareVehicles tool for side-by-side specs. Your goal is to convince customers to buy Garud vehicles for their business. Be warm and welcoming in Odiya. Keep your responses concise for voice interaction.",
-          outputAudioTranscription: {},
-          inputAudioTranscription: {},
+          systemInstruction: "You are an expert on Garud Automobiles. You MUST respond primarily in Berhampur Odiya (Ganjami dialect) to make the local customers feel at home, but you can use English if the customer prefers. You are helpful, persuasive, and professional. ONLY answer questions about Garud vehicles (L-5, L-3 models), their 200km range, 3-year battery warranty, and exchange offers. Use Google Search for up-to-date EV trends. Your goal is to convince customers to buy Garud vehicles for their business. Be warm and welcoming in Odiya. Keep your responses concise.",
+          tools: [{ googleSearch: {} }],
         },
       });
 
-      sessionRef.current = session;
-      return session;
+      setChatSession(chat);
+      setIsConnecting(false);
+      return chat;
     } catch (err) {
-      console.error("Failed to start Live session:", err);
-      setTranscription(prev => [...prev, "Error: Access denied or connection failed."]);
+      console.error("Failed to start chat session:", err);
       setIsConnecting(false);
       return null;
+    }
+  };
+
+  const speakResponse = async (text: string) => {
+    try {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) return;
+      
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-preview-tts",
+        contents: [{ parts: [{ text }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: selectedVoice },
+            },
+          },
+        },
+      });
+
+      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (base64Audio) {
+        const binaryString = atob(base64Audio);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        
+        if (!audioContextRef.current) {
+          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        }
+        
+        const pcmData = new Int16Array(bytes.buffer);
+        const floatData = new Float32Array(pcmData.length);
+        for (let i = 0; i < pcmData.length; i++) {
+          floatData[i] = pcmData[i] / 32768.0;
+        }
+        
+        const audioBuffer = audioContextRef.current.createBuffer(1, floatData.length, 24000);
+        audioBuffer.getChannelData(0).set(floatData);
+        
+        const source = audioContextRef.current.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioContextRef.current.destination);
+        source.start();
+      }
+    } catch (err) {
+      console.error("TTS error:", err);
     }
   };
 
@@ -1843,13 +1691,21 @@ function AppContent() {
     setAiInput('');
     setTranscription(prev => [...prev.slice(-10), `You: ${text}`]);
     
-    let session = sessionRef.current;
-    if (!session) {
-      session = await startLiveSession();
-    }
+    try {
+      setIsConnecting(true);
+      const chat = await getChatSession();
+      if (!chat) return;
 
-    if (session) {
-      session.sendRealtimeInput({ text });
+      const response = await chat.sendMessage({ message: text });
+      const aiText = response.text;
+      
+      setTranscription(prev => [...prev.slice(-10), `AI: ${aiText}`]);
+      speakResponse(aiText);
+    } catch (err) {
+      console.error("Chat error:", err);
+      setTranscription(prev => [...prev, "Error: Failed to get response."]);
+    } finally {
+      setIsConnecting(false);
     }
   };
 
@@ -1857,39 +1713,76 @@ function AppContent() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    let session = sessionRef.current;
-    if (!session) {
-      setTranscription(prev => [...prev, "Starting AI session for analysis..."]);
-      session = await startLiveSession();
-    }
+    try {
+      setIsConnecting(true);
+      const chat = await getChatSession();
+      if (!chat) return;
 
-    if (session) {
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = async () => {
         const base64Data = (reader.result as string).split(',')[1];
-        session?.sendRealtimeInput({
-          video: { data: base64Data, mimeType: file.type }
+        setTranscription(prev => [...prev.slice(-10), "You: [Sent an image]"]);
+        
+        const response = await chat.sendMessage({
+          message: [
+            { text: "Analyze this image and tell me how it relates to Garud Automobiles. If it's a vehicle, identify if it's L-5 or L-3 and highlight its features." },
+            { inlineData: { data: base64Data, mimeType: file.type } }
+          ]
         });
-        setTranscription(prev => [...prev, "Sent image for analysis..."]);
+        
+        const aiText = response.text;
+        setTranscription(prev => [...prev.slice(-10), `AI: ${aiText}`]);
+        speakResponse(aiText);
       };
       reader.readAsDataURL(file);
+    } catch (err) {
+      console.error("Image analysis error:", err);
+      setTranscription(prev => [...prev, "Error: Failed to analyze image."]);
+    } finally {
+      setIsConnecting(false);
     }
   };
 
-  const stopLiveSession = () => {
-    if (sessionRef.current) {
-      sessionRef.current.close();
-      sessionRef.current = null;
+  const toggleRecording = () => {
+    if (isRecording) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setIsRecording(false);
+      return;
     }
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-      processorRef.current = null;
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setTranscription(prev => [...prev, "Error: Speech recognition not supported in this browser."]);
+      return;
     }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    setIsRecording(false);
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = lang === 'or' ? 'or-IN' : lang === 'te' ? 'te-IN' : 'en-IN';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    recognition.onstart = () => {
+      setIsRecording(true);
+    };
+
+    recognition.onresult = (event: any) => {
+      const text = event.results[0][0].transcript;
+      setAiInput(text);
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("Speech recognition error:", event.error);
+      setIsRecording(false);
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
   };
 
   if (loading) {
@@ -2287,32 +2180,6 @@ function AppContent() {
                     </div>
                   </div>
                   
-                  {!hasApiKey && (
-                    <div className="mb-6 p-4 bg-lemon-yellow/10 border border-lemon-yellow/30 rounded-xl space-y-3 animate-in fade-in zoom-in duration-300">
-                      <div className="flex items-center gap-2">
-                        <Lock size={14} className="text-lemon-yellow" />
-                        <p className="text-[10px] font-bold text-lemon-yellow uppercase tracking-widest">Billing Required</p>
-                      </div>
-                      <p className="text-[10px] text-white/60 leading-relaxed">
-                        To use the advanced Gemini 3.1 Live Voice features, you must select an API key from a paid Google Cloud project.
-                      </p>
-                      <button 
-                        onClick={async () => {
-                          if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
-                            await window.aistudio.openSelectKey();
-                            setHasApiKey(true);
-                          }
-                        }}
-                        className="w-full bg-lemon-yellow text-black text-[10px] font-black py-2 rounded-lg hover:bg-lemon-yellow/80 transition-all shadow-[0_0_20px_rgba(255,255,0,0.2)]"
-                      >
-                        SET API KEY
-                      </button>
-                      <div className="flex justify-center">
-                        <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-[8px] text-white/20 underline hover:text-white/40 transition-colors">Billing Documentation</a>
-                      </div>
-                    </div>
-                  )}
-                  
                   {isRecording && (
                     <div className="mb-4 h-8 bg-white/5 rounded-xl overflow-hidden relative border border-white/10">
                       <canvas 
@@ -2369,7 +2236,7 @@ function AppContent() {
                         onKeyDown={(e) => e.key === 'Enter' && handleSendText()}
                       />
                       <button 
-                        onClick={isRecording || isConnecting ? stopLiveSession : startLiveSession}
+                        onClick={toggleRecording}
                         disabled={isConnecting}
                         className={`p-2 rounded-xl transition-all ${isRecording ? 'text-red-500 bg-red-500/10' : isConnecting ? 'text-lemon-yellow bg-lemon-yellow/10 opacity-50' : 'text-white/40 hover:text-white'}`}
                       >
