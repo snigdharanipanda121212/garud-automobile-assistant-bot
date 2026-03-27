@@ -82,14 +82,14 @@
       "description": "A customer review",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
         "userName": { "type": "string" },
-        "userPhoto": { "type": "string" },
+        "text": { "type": "string" },
         "rating": { "type": "integer" },
-        "comment": { "type": "string" },
+        "vehicleId": { "type": "string" },
+        "vehicleName": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["userId", "userName", "rating", "comment", "createdAt"]
+      "required": ["userName", "text", "rating", "createdAt"]
     }
   },
   "firestore": {

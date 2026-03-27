@@ -41,14 +41,16 @@ import {
   Search,
   Globe,
   LogOut,
+  LogIn,
+  Lock,
   Send,
   Camera
 } from 'lucide-react';
-import { GoogleGenAI, Modality, LiveServerMessage } from "@google/genai";
+import { GoogleGenAI, Modality, LiveServerMessage, Type } from "@google/genai";
 import { COMMERCIAL_SCRIPT, Scene, Vehicle, INITIAL_VEHICLES, OWNER_MESSAGE } from './constants';
 import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError, testConnection } from './firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { collection, onSnapshot, query, addDoc, deleteDoc, doc, setDoc, getDoc, serverTimestamp, Timestamp, orderBy, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, addDoc, deleteDoc, doc, setDoc, getDoc, serverTimestamp, Timestamp, orderBy, updateDoc, limit } from 'firebase/firestore';
 import { translations, Language } from './translations';
 
 // --- Quotation Form Component ---
@@ -382,12 +384,11 @@ const TestDriveForm = ({ vehicle, onClose }: { vehicle: Vehicle, onClose: () => 
 };
 
 // --- Vehicle Management Page ---
-const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onImageClick, onGoToReviews, isOwner }: { 
+const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onImageClick, isOwner }: { 
   vehicles: Vehicle[], 
   onRequestQuotation: (v: Vehicle) => void, 
   onBookTestDrive: (v: Vehicle) => void,
   onImageClick: (url: string) => void,
-  onGoToReviews: () => void,
   isOwner: boolean 
 }) => {
   const { t } = useContext(LanguageContext);
@@ -621,224 +622,8 @@ const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onIm
   );
 };
 
-// --- Review Page Component ---
-const ReviewPage = ({ user, isOwner, vehicles, customerName }: { user: FirebaseUser | null, isOwner: boolean, vehicles: Vehicle[], customerName: string }) => {
-  const { t } = useContext(LanguageContext);
-  const [reviews, setReviews] = useState<any[]>([]);
-  const [newReview, setNewReview] = useState({ rating: 5, comment: '', vehicleId: '', vehicleType: '', customVehicleName: '' });
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-
-  useEffect(() => {
-    const q = query(collection(db, 'reviews'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
-      setReviews(list);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'reviews'));
-    return () => unsubscribe();
-  }, []);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newReview.comment.trim()) return;
-
-    setIsSubmitting(true);
-    try {
-      const selectedVehicle = vehicles.find(v => v.id === newReview.vehicleId);
-      await addDoc(collection(db, 'reviews'), {
-        userId: user?.uid || 'guest',
-        userName: user?.displayName || customerName || 'Guest Customer',
-        userPhoto: user?.photoURL || '',
-        rating: newReview.rating,
-        comment: newReview.comment,
-        vehicleId: newReview.vehicleId,
-        vehicleName: selectedVehicle ? selectedVehicle.name : newReview.customVehicleName,
-        vehicleType: selectedVehicle ? selectedVehicle.category : newReview.vehicleType,
-        createdAt: serverTimestamp()
-      });
-      setNewReview({ rating: 5, comment: '', vehicleId: '', vehicleType: '', customVehicleName: '' });
-      setSubmitted(true);
-      setTimeout(() => setSubmitted(false), 5000);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'reviews');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this review?")) return;
-    try {
-      await deleteDoc(doc(db, 'reviews', id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'reviews');
-    }
-  };
-
-  return (
-    <div className="max-w-4xl mx-auto py-12 px-6 space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="text-center space-y-4">
-        <h2 className="text-4xl font-black tracking-tighter uppercase italic text-glow-blue">{t.reviews}</h2>
-        <p className="text-white/40 font-mono text-xs tracking-widest uppercase">{t.shareExperience}</p>
-      </div>
-
-      <div className="glass-panel p-8 rounded-3xl border border-white/10 space-y-6">
-        <h3 className="text-xl font-bold flex items-center gap-2">
-          <Star className="text-lemon-yellow" size={20} />
-          {t.writeReview}
-        </h3>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div className="space-y-2">
-              <label className="text-[10px] text-white/40 uppercase tracking-widest font-mono">{t.rating}</label>
-              <div className="flex gap-2">
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <button
-                    key={star}
-                    type="button"
-                    onClick={() => setNewReview({ ...newReview, rating: star })}
-                    className={`transition-all ${newReview.rating >= star ? 'text-lemon-yellow scale-110' : 'text-white/20'}`}
-                  >
-                    <Star fill={newReview.rating >= star ? 'currentColor' : 'none'} size={24} />
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-[10px] text-white/40 uppercase tracking-widest font-mono">{t.selectVehicle}</label>
-              <select
-                className="w-full bg-white/5 border border-white/10 rounded-xl p-3 focus:border-electric-blue outline-none text-sm"
-                value={newReview.vehicleId}
-                onChange={(e) => setNewReview({ ...newReview, vehicleId: e.target.value, customVehicleName: '', vehicleType: '' })}
-              >
-                <option value="" className="bg-black">{t.selectVehicle}</option>
-                {vehicles.map(v => (
-                  <option key={v.id} value={v.id} className="bg-black">{v.name}</option>
-                ))}
-                <option value="other" className="bg-black">Other / Not Listed</option>
-              </select>
-            </div>
-
-            {newReview.vehicleId === 'other' && (
-              <>
-                <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
-                  <label className="text-[10px] text-white/40 uppercase tracking-widest font-mono">Vehicle Type</label>
-                  <select
-                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 focus:border-electric-blue outline-none text-sm"
-                    value={newReview.vehicleType}
-                    onChange={(e) => setNewReview({ ...newReview, vehicleType: e.target.value })}
-                  >
-                    <option value="" className="bg-black">Select Type</option>
-                    <option value="Passenger" className="bg-black">Passenger</option>
-                    <option value="Cargo" className="bg-black">Cargo</option>
-                    <option value="Tipper" className="bg-black">Tipper</option>
-                    <option value="Loader" className="bg-black">Loader</option>
-                  </select>
-                </div>
-                <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
-                  <label className="text-[10px] text-white/40 uppercase tracking-widest font-mono">Vehicle Name (Optional)</label>
-                  <input
-                    type="text"
-                    placeholder="Enter vehicle model..."
-                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 focus:border-electric-blue outline-none text-sm"
-                    value={newReview.customVehicleName}
-                    onChange={(e) => setNewReview({ ...newReview, customVehicleName: e.target.value })}
-                  />
-                </div>
-              </>
-            )}
-          </div>
-          <textarea
-            required
-            rows={3}
-            placeholder="Share your experience with Garud Automobiles..."
-            className="w-full bg-white/5 border border-white/10 rounded-xl p-4 focus:border-electric-blue outline-none resize-none"
-            value={newReview.comment}
-            onChange={(e) => setNewReview({ ...newReview, comment: e.target.value })}
-          />
-          {submitted && (
-            <motion.div 
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="p-4 bg-green-500/20 border border-green-500/50 rounded-xl text-green-400 text-sm font-bold text-center"
-            >
-              REVIEW POSTED SUCCESSFULLY! THANK YOU.
-            </motion.div>
-          )}
-          <button
-            disabled={isSubmitting}
-            type="submit"
-            className="bg-electric-blue hover:bg-electric-blue/80 text-white font-black px-8 py-3 rounded-xl transition-all disabled:opacity-50"
-          >
-            {isSubmitting ? 'SUBMITTING...' : t.postReview.toUpperCase()}
-          </button>
-        </form>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {reviews.map((review) => (
-          <motion.div
-            key={review.id}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="glass-panel p-6 rounded-2xl border border-white/5 space-y-4"
-          >
-            <div className="flex justify-between items-start">
-              <div className="flex items-center gap-3">
-                <img src={review.userPhoto} alt={review.userName} className="w-10 h-10 rounded-full border border-white/10" />
-                <div>
-                  <h4 className="font-bold text-sm">{review.userName}</h4>
-                  <div className="flex items-center gap-2">
-                    <div className="flex gap-1">
-                      {[1, 2, 3, 4, 5].map((star) => (
-                        <Star
-                          key={star}
-                          size={10}
-                          className={review.rating >= star ? 'text-lemon-yellow' : 'text-white/10'}
-                          fill={review.rating >= star ? 'currentColor' : 'none'}
-                        />
-                      ))}
-                    </div>
-                    {review.vehicleName && (
-                      <span className="text-[10px] text-lemon-yellow font-mono uppercase tracking-tighter bg-lemon-yellow/10 px-2 py-0.5 rounded border border-lemon-yellow/20">
-                        {review.vehicleName}
-                      </span>
-                    )}
-                    {review.vehicleType && (
-                      <span className="text-[10px] text-white/40 font-mono uppercase tracking-tighter bg-white/5 px-2 py-0.5 rounded border border-white/10">
-                        {review.vehicleType}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-[10px] text-white/20 font-mono">
-                  {review.createdAt?.toDate ? review.createdAt.toDate().toLocaleDateString() : 'Just now'}
-                </span>
-                {isOwner && (
-                  <button
-                    onClick={() => handleDelete(review.id)}
-                    className="p-1 hover:bg-red-500/20 rounded transition-all text-white/20 hover:text-red-500"
-                    title="Delete Review"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                )}
-              </div>
-            </div>
-            <p className="text-sm text-white/70 italic leading-relaxed">"{review.comment}"</p>
-          </motion.div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
 // --- Owner Dashboard Component ---
-const OwnerDashboard = () => {
+const OwnerDashboard = ({ user, userRole, loginWithGoogle }: { user: any, userRole: string, loginWithGoogle: () => void }) => {
   const { lang, t } = useContext(LanguageContext);
   const [quotations, setQuotations] = useState<any[]>([]);
   const [testDrives, setTestDrives] = useState<any[]>([]);
@@ -847,26 +632,69 @@ const OwnerDashboard = () => {
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest');
   const [searchTerm, setSearchTerm] = useState('');
 
+  const isAdmin = userRole === 'admin' && user?.email === 'sarita.riusriu121212@gmail.com';
+
   useEffect(() => {
+    if (!isAdmin) return;
+
     const qQ = query(collection(db, 'quotations'), orderBy('createdAt', sortBy === 'newest' ? 'desc' : 'asc'));
     const unsubscribeQ = onSnapshot(qQ, (snapshot) => {
       const list: any[] = [];
       snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
       setQuotations(list);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'quotations'));
+    }, (error) => {
+      // Don't throw if it's a permission error and we already know they aren't admin
+      if (error.code === 'permission-denied') {
+        console.warn("Permission denied for quotations. User might not be fully authenticated as admin.");
+      } else {
+        handleFirestoreError(error, OperationType.LIST, 'quotations');
+      }
+    });
 
     const qT = query(collection(db, 'test_drives'), orderBy('createdAt', sortBy === 'newest' ? 'desc' : 'asc'));
     const unsubscribeT = onSnapshot(qT, (snapshot) => {
       const list: any[] = [];
       snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
       setTestDrives(list);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'test_drives'));
+    }, (error) => {
+      if (error.code === 'permission-denied') {
+        console.warn("Permission denied for test_drives. User might not be fully authenticated as admin.");
+      } else {
+        handleFirestoreError(error, OperationType.LIST, 'test_drives');
+      }
+    });
 
     return () => {
       unsubscribeQ();
       unsubscribeT();
     };
-  }, [sortBy]);
+  }, [sortBy, isAdmin]);
+
+  if (!isAdmin) {
+    return (
+      <div className="max-w-4xl mx-auto py-20 px-6 text-center space-y-8">
+        <div className="w-20 h-20 bg-lemon-yellow/20 rounded-full flex items-center justify-center mx-auto border border-lemon-yellow/30">
+          <Lock className="text-lemon-yellow" size={32} />
+        </div>
+        <div className="space-y-4">
+          <h2 className="text-3xl font-black tracking-tighter uppercase italic">ADMIN ACCESS REQUIRED</h2>
+          <p className="text-white/60 max-w-md mx-auto">
+            To view customer inquiries and manage the dashboard, you must log in with your registered Google Admin account.
+          </p>
+        </div>
+        <button
+          onClick={loginWithGoogle}
+          className="bg-electric-blue hover:bg-electric-blue/80 text-white font-black px-8 py-4 rounded-2xl flex items-center gap-3 mx-auto transition-all shadow-[0_0_30px_rgba(0,102,255,0.3)]"
+        >
+          <LogIn size={20} />
+          LOGIN WITH GOOGLE
+        </button>
+        <p className="text-[10px] text-white/20 font-mono uppercase tracking-widest">
+          Authorized Email: sarita.riusriu121212@gmail.com
+        </p>
+      </div>
+    );
+  }
 
   const filteredItems = (activeView === 'quotations' ? quotations : testDrives).filter(item => {
     const matchesStatus = filterStatus === 'all' || item.status === filterStatus;
@@ -1099,6 +927,171 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
   }
 }
 
+// --- Review Page Component ---
+function ReviewPage({ isOwner }: { isOwner: boolean }) {
+  const { t } = useContext(LanguageContext);
+  const [reviews, setReviews] = useState<any[]>([]);
+  const [newReview, setNewReview] = useState('');
+  const [reviewerName, setReviewerName] = useState('');
+  const [rating, setRating] = useState(5);
+  const [selectedVehicle, setSelectedVehicle] = useState(INITIAL_VEHICLES[0].id);
+
+  useEffect(() => {
+    const q = query(collection(db, 'reviews'), orderBy('createdAt', 'desc'), limit(20));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setReviews(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'reviews');
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleSubmitReview = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newReview.trim()) return;
+
+    try {
+      await addDoc(collection(db, 'reviews'), {
+        text: newReview,
+        rating,
+        userName: reviewerName.trim() || 'Anonymous Customer',
+        vehicleId: selectedVehicle,
+        vehicleName: INITIAL_VEHICLES.find(v => v.id === selectedVehicle)?.name,
+        createdAt: serverTimestamp()
+      });
+      setNewReview('');
+      setReviewerName('');
+      setRating(5);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'reviews');
+    }
+  };
+
+  const handleDeleteReview = async (id: string) => {
+    if (!isOwner) return;
+    try {
+      await deleteDoc(doc(db, 'reviews', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'reviews');
+    }
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto py-12 px-6 space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="text-center space-y-4">
+        <h2 className="text-4xl font-black tracking-tighter uppercase italic text-glow-blue">{t.reviews}</h2>
+        <p className="text-white/40 font-mono text-xs tracking-widest uppercase">What our customers say about Garud</p>
+      </div>
+
+      <div className="glass-panel p-8 rounded-3xl border border-white/10 space-y-6">
+        <form onSubmit={handleSubmitReview} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-white/40 ml-1">Your Name</label>
+              <input 
+                type="text"
+                value={reviewerName}
+                onChange={(e) => setReviewerName(e.target.value)}
+                placeholder="Enter your name (optional)"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:border-electric-blue outline-none transition-all text-sm"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-white/40 ml-1">{t.vehicleModel}</label>
+              <select 
+                value={selectedVehicle}
+                onChange={(e) => setSelectedVehicle(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:border-electric-blue outline-none transition-all text-sm"
+              >
+                {INITIAL_VEHICLES.map(v => (
+                  <option key={v.id} value={v.id} className="bg-zinc-900">{v.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-white/40 ml-1">{t.rating}</label>
+              <div className="flex gap-2 bg-white/5 p-2 rounded-xl border border-white/10">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button
+                    key={star}
+                    type="button"
+                    onClick={() => setRating(star)}
+                    className={`p-1 transition-all ${rating >= star ? 'text-lemon-yellow scale-110' : 'text-white/10'}`}
+                  >
+                    <Star size={20} fill={rating >= star ? 'currentColor' : 'none'} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] uppercase tracking-widest text-white/40 ml-1">{t.writeReview}</label>
+            <textarea
+              value={newReview}
+              onChange={(e) => setNewReview(e.target.value)}
+              placeholder={t.shareExperience}
+              className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-4 focus:border-electric-blue outline-none transition-all min-h-[120px] text-sm"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={!newReview.trim()}
+            className="w-full bg-electric-blue hover:bg-electric-blue/80 disabled:opacity-50 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 transition-all shadow-[0_0_30px_rgba(0,102,255,0.2)]"
+          >
+            <Send size={18} />
+            {t.postReview}
+          </button>
+        </form>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {reviews.map((review) => (
+          <motion.div
+            key={review.id}
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="glass-panel p-6 rounded-3xl border border-white/5 space-y-4 hover:border-white/20 transition-all group relative"
+          >
+            {isOwner && (
+              <button 
+                onClick={() => handleDeleteReview(review.id)}
+                className="absolute top-4 right-4 p-2 text-white/20 hover:text-red-500 transition-colors"
+                title="Delete Review"
+              >
+                <Trash2 size={16} />
+              </button>
+            )}
+            <div className="flex justify-between items-start">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center border border-white/10">
+                  <User size={20} className="text-white/20" />
+                </div>
+                <div>
+                  <p className="font-bold text-sm">{review.userName}</p>
+                  <p className="text-[10px] text-white/40 uppercase tracking-widest">{review.vehicleName}</p>
+                </div>
+              </div>
+              <div className="flex gap-0.5 text-lemon-yellow">
+                {Array.from({ length: review.rating || 5 }).map((_, i) => (
+                  <Star key={i} size={12} fill="currentColor" />
+                ))}
+              </div>
+            </div>
+            <p className="text-sm text-white/70 leading-relaxed italic">"{review.text}"</p>
+            <div className="pt-4 border-t border-white/5 flex justify-between items-center">
+              <p className="text-[10px] font-mono text-white/20">
+                {review.createdAt?.toDate ? review.createdAt.toDate().toLocaleDateString() : 'Recently'}
+              </p>
+            </div>
+          </motion.div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // --- Contact Page Component ---
 function ContactPage() {
   const { t } = useContext(LanguageContext);
@@ -1163,6 +1156,76 @@ export default function App() {
 
 const LanguageContext = React.createContext<{ lang: Language, t: any }>({ lang: 'en', t: translations.en });
 
+// --- Comparison Modal Component ---
+const ComparisonModal = ({ vehicles, onClose }: { vehicles: Vehicle[], onClose: () => void }) => {
+  const { t } = useContext(LanguageContext);
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 sm:p-6"
+    >
+      <div className="w-full max-w-5xl bg-zinc-900/50 border border-white/10 rounded-[32px] overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="p-6 border-b border-white/10 flex justify-between items-center bg-zinc-900">
+          <div>
+            <h2 className="text-2xl font-black tracking-tighter uppercase italic text-glow-blue">VEHICLE COMPARISON</h2>
+            <p className="text-[10px] text-white/40 font-mono uppercase tracking-widest">Side-by-side specifications</p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-all">
+            <X size={24} />
+          </button>
+        </div>
+        
+        <div className="flex-1 overflow-x-auto p-6">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                <th className="p-4 text-left text-[10px] uppercase tracking-widest text-white/20 font-mono border-b border-white/5">Feature</th>
+                {vehicles.map(v => (
+                  <th key={v.id} className="p-4 text-center border-b border-white/5 min-w-[200px]">
+                    <div className="space-y-3">
+                      <div className="aspect-video rounded-xl overflow-hidden border border-white/10">
+                        <img src={v.imageUrl} alt={v.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      </div>
+                      <p className="font-black text-sm tracking-tight uppercase italic text-electric-blue">{v.name}</p>
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="text-sm">
+              {[
+                { label: 'Model', key: 'model' },
+                { label: 'Category', key: 'category' },
+                { label: 'Range', key: 'range' },
+                { label: 'Battery Warranty', key: 'batteryWarranty' },
+                { label: 'Vehicle Warranty', key: 'vehicleWarranty' },
+                { label: 'Price', key: 'price' }
+              ].map((row, idx) => (
+                <tr key={row.key} className={idx % 2 === 0 ? 'bg-white/[0.02]' : ''}>
+                  <td className="p-4 font-bold text-white/60 border-b border-white/5">{row.label}</td>
+                  {vehicles.map(v => (
+                    <td key={v.id} className="p-4 text-center border-b border-white/5 font-mono text-xs">
+                      {v[row.key as keyof Vehicle]}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        
+        <div className="p-6 bg-electric-blue/5 border-t border-white/10 text-center">
+          <p className="text-xs font-bold text-electric-blue uppercase tracking-widest animate-pulse">
+            Garud EVCO: The most reliable choice for your business.
+          </p>
+        </div>
+      </div>
+    </motion.div>
+  );
+};
+
 function AppContent() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userRole, setUserRole] = useState<'admin' | 'viewer'>('viewer');
@@ -1174,6 +1237,8 @@ function AppContent() {
   const t = translations[lang || 'en'];
   const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
   const [isLiveMode, setIsLiveMode] = useState(false);
+  const [comparisonVehicles, setComparisonVehicles] = useState<Vehicle[]>([]);
+  const [isConnecting, setIsConnecting] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [aiInput, setAiInput] = useState('');
   const [isOwner, setIsOwner] = useState(false);
@@ -1276,6 +1341,8 @@ function AppContent() {
       if (!lang) setLang('en');
       localStorage.setItem('garud_is_owner', 'true');
       setPasswordError(false);
+      // Inform the user they need to log in with Google for full dashboard access
+      console.log("Owner password correct. Please log in with Google (sarita.riusriu121212@gmail.com) for dashboard access.");
     } else {
       setPasswordError(true);
       setTimeout(() => setPasswordError(false), 3000);
@@ -1315,41 +1382,137 @@ function AppContent() {
     setCurrentSceneIndex((prev) => (prev - 1 + COMMERCIAL_SCRIPT.length) % COMMERCIAL_SCRIPT.length);
   };
 
-  const startLiveSession = async () => {
+  const audioQueueRef = useRef<Float32Array[]>([]);
+  const isPlayingRef = useRef(false);
+  const currentSourceRef = useRef<AudioBufferSourceNode | null>(null);
+
+  const stopPlayback = () => {
+    if (currentSourceRef.current) {
+      try {
+        currentSourceRef.current.stop();
+      } catch (e) {
+        // Ignore if already stopped
+      }
+      currentSourceRef.current = null;
+    }
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
+  };
+
+  const playNextInQueue = async () => {
+    if (!audioContextRef.current || audioQueueRef.current.length === 0 || isPlayingRef.current) return;
+
+    if (audioContextRef.current.state === 'suspended') {
+      await audioContextRef.current.resume();
+    }
+
+    isPlayingRef.current = true;
+    const floatData = audioQueueRef.current.shift()!;
+    
     try {
+      const audioBuffer = audioContextRef.current.createBuffer(1, floatData.length, 24000);
+      audioBuffer.getChannelData(0).set(floatData);
+
+      const playSource = audioContextRef.current.createBufferSource();
+      playSource.buffer = audioBuffer;
+      playSource.connect(audioContextRef.current.destination);
+      currentSourceRef.current = playSource;
+      
+      playSource.onended = () => {
+        if (currentSourceRef.current === playSource) {
+          currentSourceRef.current = null;
+        }
+        isPlayingRef.current = false;
+        playNextInQueue();
+      };
+      
+      playSource.start();
+    } catch (err) {
+      console.error("Playback error:", err);
+      isPlayingRef.current = false;
+      playNextInQueue();
+    }
+  };
+
+  const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+  };
+
+  const startLiveSession = async () => {
+    if (sessionRef.current) return sessionRef.current;
+    if (isConnecting) {
+      // Wait for existing connection attempt
+      while (isConnecting) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (sessionRef.current) return sessionRef.current;
+      }
+    }
+    
+    try {
+      setIsConnecting(true);
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
         setTranscription(prev => [...prev, "Error: GEMINI_API_KEY is not configured."]);
-        return;
+        setIsConnecting(false);
+        return null;
       }
 
       const ai = new GoogleGenAI({ apiKey });
       
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      
       if (audioContextRef.current.state === 'suspended') {
         await audioContextRef.current.resume();
       }
 
+      const contextSampleRate = audioContextRef.current.sampleRate;
       streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
       
       const source = audioContextRef.current.createMediaStreamSource(streamRef.current);
-      processorRef.current = audioContextRef.current.createScriptProcessor(4096, 1, 1);
+      processorRef.current = audioContextRef.current.createScriptProcessor(2048, 1, 1);
 
-      const sessionPromise = ai.live.connect({
+      const gainNode = audioContextRef.current.createGain();
+      gainNode.gain.value = 0;
+
+      const session = await ai.live.connect({
         model: "gemini-3.1-flash-live-preview",
         callbacks: {
           onopen: () => {
             setIsRecording(true);
+            setIsConnecting(false);
             source.connect(processorRef.current!);
-            processorRef.current!.connect(audioContextRef.current!.destination);
+            processorRef.current!.connect(gainNode);
+            gainNode.connect(audioContextRef.current!.destination);
             
             processorRef.current!.onaudioprocess = (e) => {
               const inputData = e.inputBuffer.getChannelData(0);
-              const pcmData = new Int16Array(inputData.length);
-              for (let i = 0; i < inputData.length; i++) {
-                pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+              
+              // Resample to 16000 if needed
+              let resampledData: Float32Array;
+              if (contextSampleRate !== 16000) {
+                const ratio = contextSampleRate / 16000;
+                const newLength = Math.round(inputData.length / ratio);
+                resampledData = new Float32Array(newLength);
+                for (let i = 0; i < newLength; i++) {
+                  resampledData[i] = inputData[Math.round(i * ratio)];
+                }
+              } else {
+                resampledData = inputData;
               }
-              const base64Data = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
+
+              const pcmData = new Int16Array(resampledData.length);
+              for (let i = 0; i < resampledData.length; i++) {
+                pcmData[i] = Math.max(-1, Math.min(1, resampledData[i])) * 0x7FFF;
+              }
+              const base64Data = arrayBufferToBase64(pcmData.buffer);
               
               if (sessionRef.current) {
                 sessionRef.current.sendRealtimeInput({
@@ -1358,47 +1521,100 @@ function AppContent() {
               }
             };
           },
-          onmessage: async (message: LiveServerMessage) => {
-            const parts = message.serverContent?.modelTurn?.parts;
-            if (parts) {
-              for (const part of parts) {
+          onmessage: async (message: any) => {
+            // Handle interruptions
+            if (message.serverContent?.interrupted) {
+              stopPlayback();
+            }
+
+            // Handle tool calls
+            if (message.serverContent?.modelTurn?.parts) {
+              for (const part of message.serverContent.modelTurn.parts) {
+                if (part.call) {
+                  const { name, args } = part.call;
+                  if (name === 'compareVehicles') {
+                    const ids = args.vehicleIds as string[];
+                    const toCompare = INITIAL_VEHICLES.filter(v => ids.includes(v.id));
+                    if (toCompare.length > 0) {
+                      setComparisonVehicles(toCompare);
+                      // Send response back to AI
+                      session.sendToolResponse({
+                        functionResponses: [{
+                          name: 'compareVehicles',
+                          response: { success: true, message: `Comparing ${toCompare.length} vehicles.` },
+                          id: part.call.id
+                        }]
+                      });
+                    }
+                  }
+                }
+              }
+            }
+
+            // Handle model turn parts (text and audio)
+            if (message.serverContent?.modelTurn?.parts) {
+              for (const part of message.serverContent.modelTurn.parts) {
                 if (part.text) {
                   setTranscription(prev => [...prev.slice(-10), `AI: ${part.text}`]);
                 }
                 if (part.inlineData?.data) {
                   const base64Audio = part.inlineData.data;
-                  
-                  // Manually decode raw PCM data (16-bit, 24kHz)
                   const binaryString = atob(base64Audio);
                   const bytes = new Uint8Array(binaryString.length);
                   for (let i = 0; i < binaryString.length; i++) {
                     bytes[i] = binaryString.charCodeAt(i);
                   }
-                  const pcmData = new Int16Array(bytes.buffer);
+                  const pcmData = new Int16Array(bytes.buffer, 0, Math.floor(bytes.byteLength / 2));
                   const floatData = new Float32Array(pcmData.length);
                   for (let i = 0; i < pcmData.length; i++) {
                     floatData[i] = pcmData[i] / 32768.0;
                   }
 
-                  const audioBuffer = audioContextRef.current!.createBuffer(1, floatData.length, 24000);
-                  audioBuffer.getChannelData(0).set(floatData);
-
-                  const playSource = audioContextRef.current!.createBufferSource();
-                  playSource.buffer = audioBuffer;
-                  playSource.connect(audioContextRef.current!.destination);
-                  playSource.start();
+                  audioQueueRef.current.push(floatData);
+                  playNextInQueue();
                 }
               }
             }
-            if (message.serverContent?.interrupted) {
-              // Handle interruption if needed
-              console.log("AI Interrupted");
+            
+            // Handle real-time transcription
+            if (message.serverContent?.outputAudioTranscription) {
+              const text = message.serverContent.outputAudioTranscription.text;
+              if (text) {
+                setTranscription(prev => {
+                  const last = prev[prev.length - 1];
+                  if (last?.startsWith('AI:')) {
+                    return [...prev.slice(0, -1), `AI: ${text}`];
+                  }
+                  return [...prev, `AI: ${text}`];
+                });
+              }
+            }
+            
+            if (message.serverContent?.inputAudioTranscription) {
+              const text = message.serverContent.inputAudioTranscription.text;
+              if (text) {
+                setTranscription(prev => {
+                  const last = prev[prev.length - 1];
+                  if (last?.startsWith('You:')) {
+                    return [...prev.slice(0, -1), `You: ${text}`];
+                  }
+                  return [...prev, `You: ${text}`];
+                });
+              }
             }
           },
-          onclose: () => setIsRecording(false),
+          onclose: () => {
+            setIsRecording(false);
+            setIsConnecting(false);
+            sessionRef.current = null;
+            audioQueueRef.current = [];
+            isPlayingRef.current = false;
+          },
           onerror: (e) => {
             console.error("Live API Error:", e);
             setTranscription(prev => [...prev, "Error: Connection failed."]);
+            setIsConnecting(false);
+            stopLiveSession();
           },
         },
         config: {
@@ -1406,46 +1622,73 @@ function AppContent() {
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
           },
-          tools: [{ googleSearch: {} }],
-          systemInstruction: "You are an expert on Garud Automobiles. ONLY answer questions about vehicles, the Garud EVCO range (L-5, L-3), 200km range, 3-year battery warranty, and exchange offers. If asked about anything else, politely redirect to Garud vehicles. Use Google Search to provide up-to-date info on electric vehicle trends if relevant to Garud. Respond in Berhampur Odiya or English.",
-          inputAudioTranscription: {},
+          tools: [
+            { googleSearch: {} },
+            {
+              functionDeclarations: [{
+                name: "compareVehicles",
+                description: "Compare two or more Garud vehicles side-by-side to show specifications.",
+                parameters: {
+                  type: Type.OBJECT,
+                  properties: {
+                    vehicleIds: {
+                      type: Type.ARRAY,
+                      items: { type: Type.STRING },
+                      description: "List of vehicle IDs to compare. Available IDs: 1 (Passenger Special), 2 (Cargo Pro)."
+                    }
+                  },
+                  required: ["vehicleIds"]
+                }
+              }]
+            }
+          ],
+          systemInstruction: "You are an expert on Garud Automobiles. You MUST respond primarily in Berhampur Odiya (Ganjami dialect) to make the local customers feel at home, but you can use English if the customer prefers. You are helpful, persuasive, and professional. ONLY answer questions about Garud vehicles (L-5, L-3 models), their 200km range, 3-year battery warranty, and exchange offers. Use Google Search for up-to-date EV trends. Use the compareVehicles tool for side-by-side specs. Your goal is to convince customers to buy Garud vehicles for their business. Be warm and welcoming in Odiya.",
           outputAudioTranscription: {},
+          inputAudioTranscription: {},
         },
       });
 
-      sessionRef.current = await sessionPromise;
+      sessionRef.current = session;
+      return session;
     } catch (err) {
       console.error("Failed to start Live session:", err);
-      setTranscription(prev => [...prev, "Error: Could not access microphone or connect to AI."]);
+      setTranscription(prev => [...prev, "Error: Access denied or connection failed."]);
+      setIsConnecting(false);
+      return null;
     }
   };
 
-  const handleSendText = () => {
+  const handleSendText = async () => {
     if (!aiInput.trim()) return;
-    setTranscription(prev => [...prev.slice(-10), `You: ${aiInput}`]);
-    if (sessionRef.current) {
-      sessionRef.current.sendRealtimeInput({
-        text: aiInput
-      });
-    } else {
-      // If session not started, start it first? 
-      // For now, just show error or start it.
-      startLiveSession().then(() => {
-        if (sessionRef.current) {
-          sessionRef.current.sendRealtimeInput({ text: aiInput });
-        }
-      });
-    }
+    const text = aiInput;
     setAiInput('');
+    setTranscription(prev => [...prev.slice(-10), `You: ${text}`]);
+    
+    let session = sessionRef.current;
+    if (!session) {
+      session = await startLiveSession();
+    }
+
+    if (session) {
+      session.sendRealtimeInput({ text });
+    }
   };
 
-  const handleImageInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file && sessionRef.current) {
+    if (!file) return;
+
+    let session = sessionRef.current;
+    if (!session) {
+      setTranscription(prev => [...prev, "Starting AI session for analysis..."]);
+      session = await startLiveSession();
+    }
+
+    if (session) {
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64Data = (reader.result as string).split(',')[1];
-        sessionRef.current?.sendRealtimeInput({
+        session?.sendRealtimeInput({
           video: { data: base64Data, mimeType: file.type }
         });
         setTranscription(prev => [...prev, "Sent image for analysis..."]);
@@ -1578,6 +1821,15 @@ function AppContent() {
               {passwordError && (
                 <p className="text-red-500 text-[10px] uppercase font-bold text-center animate-pulse">Invalid Password</p>
               )}
+              {isOwner && !user && (
+                <button
+                  onClick={loginWithGoogle}
+                  className="w-full bg-electric-blue hover:bg-electric-blue/80 text-white font-black px-4 py-3 rounded-xl flex items-center justify-center gap-2 transition-all mt-4"
+                >
+                  <LogIn size={16} />
+                  LOGIN WITH GOOGLE TO ACCESS DASHBOARD
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1649,7 +1901,7 @@ function AppContent() {
                 activeTab === 'reviews' ? 'bg-electric-blue text-white' : 'text-white/50 hover:text-white'
               }`}
             >
-              <Star size={14} />
+              <MessageSquare size={14} />
               {t.reviews}
             </button>
             {!isOwner && (
@@ -1821,11 +2073,16 @@ function AppContent() {
                       <Zap size={18} />
                       GARUD AI ASSISTANT
                     </h3>
-                    <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-white/20'}`} />
+                    <div className={`w-2 h-2 rounded-full ${isConnecting ? 'bg-lemon-yellow animate-ping' : isRecording ? 'bg-red-500 animate-pulse' : 'bg-white/20'}`} />
                   </div>
                   
                   <div className="flex-1 space-y-4 overflow-y-auto mb-6 max-h-[400px] scrollbar-hide">
-                    {transcription.length === 0 ? (
+                    {isConnecting && transcription.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-full text-center space-y-4 opacity-50">
+                        <Zap size={48} className="text-lemon-yellow animate-bounce" />
+                        <p className="text-sm font-bold tracking-widest uppercase">Connecting to Garud AI...</p>
+                      </div>
+                    ) : transcription.length === 0 ? (
                       <div className="flex flex-col items-center justify-center h-full text-center space-y-4 opacity-30">
                         <Zap size={48} className="text-lemon-yellow" />
                         <p className="text-sm italic">Ask me anything about Garud Vehicles...</p>
@@ -1861,8 +2118,9 @@ function AppContent() {
                         onKeyDown={(e) => e.key === 'Enter' && handleSendText()}
                       />
                       <button 
-                        onClick={isRecording ? stopLiveSession : startLiveSession}
-                        className={`p-2 rounded-xl transition-all ${isRecording ? 'text-red-500 bg-red-500/10' : 'text-white/40 hover:text-white'}`}
+                        onClick={isRecording || isConnecting ? stopLiveSession : startLiveSession}
+                        disabled={isConnecting}
+                        className={`p-2 rounded-xl transition-all ${isRecording ? 'text-red-500 bg-red-500/10' : isConnecting ? 'text-lemon-yellow bg-lemon-yellow/10 opacity-50' : 'text-white/40 hover:text-white'}`}
                       >
                         {isRecording ? <MicOff size={20} /> : <Mic size={20} />}
                       </button>
@@ -1957,17 +2215,23 @@ function AppContent() {
             onRequestQuotation={(v) => setSelectedVehicleForQuotation(v)}
             onBookTestDrive={(v) => setSelectedVehicleForTestDrive(v)}
             onImageClick={(url) => setSelectedImage(url)}
-            onGoToReviews={() => setActiveTab('reviews')}
             isOwner={isOwner}
           />
         ) : activeTab === 'reviews' ? (
-          <ReviewPage user={user} isOwner={isOwner} vehicles={vehicles} customerName={customerName} />
+          <ReviewPage isOwner={isOwner} />
         ) : (activeTab === 'dashboard' && isOwner) ? (
-          <OwnerDashboard />
+          <OwnerDashboard user={user} userRole={userRole} loginWithGoogle={loginWithGoogle} />
         ) : (
           <ContactPage />
         )}        {/* Modals */}
         <AnimatePresence>
+          {comparisonVehicles.length > 0 && (
+            <ComparisonModal 
+              vehicles={comparisonVehicles} 
+              onClose={() => setComparisonVehicles([])} 
+            />
+          )}
+
           {selectedVehicleForQuotation && (
             <motion.div 
               initial={{ opacity: 0 }}

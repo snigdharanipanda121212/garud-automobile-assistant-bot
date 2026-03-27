@@ -21,7 +21,7 @@ service cloud.firestore {
     // Fields: name (string), phone (string), date (string), time (string), vehicleId (string), vehicleName (string), status (enum: pending, completed), createdAt (timestamp)
     //
     // Collection: reviews
-    // Fields: userId (string), userName (string), userPhoto (string), rating (int), comment (string), createdAt (timestamp)
+    // Fields: userName (string), text (string), rating (int), vehicleId (string), vehicleName (string), createdAt (timestamp)
     //
     // ===============================================================
 
@@ -112,12 +112,11 @@ service cloud.firestore {
     }
 
     function isValidReview(data) {
-      return hasRequiredFields(['userId', 'userName', 'rating', 'comment', 'createdAt']) &&
-             hasOnlyAllowedFields(['userId', 'userName', 'userPhoto', 'rating', 'comment', 'createdAt']) &&
-             data.userId is string &&
-             data.userName is string &&
+      return hasRequiredFields(['userName', 'text', 'rating', 'createdAt']) &&
+             hasOnlyAllowedFields(['userName', 'text', 'rating', 'vehicleId', 'vehicleName', 'createdAt']) &&
+             data.userName is string && data.userName.size() > 0 && data.userName.size() < 100 &&
+             data.text is string && data.text.size() > 0 && data.text.size() < 2000 &&
              data.rating is int && data.rating >= 1 && data.rating <= 5 &&
-             data.comment is string && data.comment.size() > 0 && data.comment.size() < 1000 &&
              data.createdAt is timestamp;
     }
 
@@ -157,9 +156,9 @@ service cloud.firestore {
 
     match /reviews/{reviewId} {
       allow read: if true;
-      allow create: if isAuthenticated() && isValidReview(request.resource.data) && request.resource.data.userId == request.auth.uid;
-      allow update: if isAuthenticated() && isValidReview(request.resource.data) && resource.data.userId == request.auth.uid;
-      allow delete: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isValidReview(request.resource.data);
+      allow update: if false;
+      allow delete: if isAdmin();
     }
   }
 }
