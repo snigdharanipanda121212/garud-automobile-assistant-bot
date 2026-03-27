@@ -41,6 +41,55 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "price", "model", "range", "batteryWarranty", "vehicleWarranty"]
+    },
+    "Quotation": {
+      "title": "Quotation",
+      "description": "A customer quotation request",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "string" },
+        "financeNeeded": { "type": "boolean" },
+        "vehicleId": { "type": "string" },
+        "vehicleName": { "type": "string" },
+        "vehicleModel": { "type": "string" },
+        "vehiclePrice": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "completed"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "phone", "address", "vehicleId", "status", "createdAt"]
+    },
+    "TestDrive": {
+      "title": "TestDrive",
+      "description": "A customer test drive booking",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "vehicleId": { "type": "string" },
+        "vehicleName": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "completed"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "phone", "date", "time", "vehicleId", "status", "createdAt"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "A customer review",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userPhoto": { "type": "string" },
+        "rating": { "type": "integer" },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "userName", "rating", "comment", "createdAt"]
     }
   },
   "firestore": {
@@ -55,6 +104,18 @@
     "/vehicles/{vehicleId}": {
       "schema": "Vehicle",
       "description": "Collection of vehicles"
+    },
+    "/quotations/{quotationId}": {
+      "schema": "Quotation",
+      "description": "Collection of quotation requests"
+    },
+    "/test_drives/{testDriveId}": {
+      "schema": "TestDrive",
+      "description": "Collection of test drive bookings"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Collection of customer reviews"
     }
   }
 }

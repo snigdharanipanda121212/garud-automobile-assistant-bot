@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, Component } from 'react';
+import React, { useState, useEffect, useRef, Component, useContext } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ChevronRight, 
@@ -30,18 +30,30 @@ import {
   Mail,
   MapPin,
   CheckCircle,
+  Check,
   X,
   Calendar,
-  Clock
+  Clock,
+  Star,
+  BarChart3,
+  ClipboardList,
+  Users,
+  Search,
+  Globe,
+  LogOut,
+  Send,
+  Camera
 } from 'lucide-react';
 import { GoogleGenAI, Modality, LiveServerMessage } from "@google/genai";
 import { COMMERCIAL_SCRIPT, Scene, Vehicle, INITIAL_VEHICLES, OWNER_MESSAGE } from './constants';
 import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError, testConnection } from './firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { collection, onSnapshot, query, addDoc, deleteDoc, doc, setDoc, getDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { collection, onSnapshot, query, addDoc, deleteDoc, doc, setDoc, getDoc, serverTimestamp, Timestamp, orderBy, updateDoc } from 'firebase/firestore';
+import { translations, Language } from './translations';
 
 // --- Quotation Form Component ---
 const QuotationForm = ({ vehicle, onClose, onOpenFinance }: { vehicle: Vehicle, onClose: () => void, onOpenFinance: () => void }) => {
+  const { t } = useContext(LanguageContext);
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
@@ -51,13 +63,25 @@ const QuotationForm = ({ vehicle, onClose, onOpenFinance }: { vehicle: Vehicle, 
   });
   const [submitted, setSubmitted] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Quotation Request:", { vehicle, ...formData });
-    if (formData.financeNeeded) {
-      onOpenFinance();
+    try {
+      await addDoc(collection(db, 'quotations'), {
+        ...formData,
+        vehicleId: vehicle.id,
+        vehicleName: vehicle.name,
+        vehicleModel: vehicle.model,
+        vehiclePrice: vehicle.price,
+        status: 'pending',
+        createdAt: serverTimestamp()
+      });
+      if (formData.financeNeeded) {
+        onOpenFinance();
+      }
+      setSubmitted(true);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'quotations');
     }
-    setSubmitted(true);
   };
 
   if (submitted) {
@@ -66,9 +90,9 @@ const QuotationForm = ({ vehicle, onClose, onOpenFinance }: { vehicle: Vehicle, 
         <div className="w-16 h-16 bg-lemon-yellow/20 rounded-full flex items-center justify-center mx-auto">
           <CheckCircle className="text-lemon-yellow" size={32} />
         </div>
-        <h3 className="text-2xl font-bold text-glow-yellow">QUOTATION SENT!</h3>
-        <p className="text-white/60">The owner has received your request for {vehicle.name}. We will contact you shortly.</p>
-        <button onClick={onClose} className="bg-electric-blue px-6 py-2 rounded-lg font-bold">CLOSE</button>
+        <h3 className="text-2xl font-bold text-glow-yellow">{t.requestSubmitted.toUpperCase()}</h3>
+        <p className="text-white/60">{t.contactSoon}</p>
+        <button onClick={onClose} className="bg-electric-blue px-6 py-2 rounded-lg font-bold">{t.close.toUpperCase()}</button>
       </div>
     );
   }
@@ -80,7 +104,7 @@ const QuotationForm = ({ vehicle, onClose, onOpenFinance }: { vehicle: Vehicle, 
       </button>
       <h2 className="text-2xl font-bold text-glow-blue flex items-center gap-2">
         <FileText className="text-lemon-yellow" />
-        REQUEST QUOTATION
+        {t.requestQuotation.toUpperCase()}
       </h2>
       <div className="p-4 bg-white/5 rounded-xl border border-white/5 flex items-center gap-4">
         <div className="w-12 h-12 rounded-lg overflow-hidden">
@@ -94,7 +118,7 @@ const QuotationForm = ({ vehicle, onClose, onOpenFinance }: { vehicle: Vehicle, 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1">
-            <label className="text-[10px] uppercase tracking-widest text-white/40">Full Name</label>
+            <label className="text-[10px] uppercase tracking-widest text-white/40">{t.fullName}</label>
             <div className="relative">
               <User className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" size={14} />
               <input 
@@ -107,7 +131,7 @@ const QuotationForm = ({ vehicle, onClose, onOpenFinance }: { vehicle: Vehicle, 
             </div>
           </div>
           <div className="space-y-1">
-            <label className="text-[10px] uppercase tracking-widest text-white/40">Phone Number</label>
+            <label className="text-[10px] uppercase tracking-widest text-white/40">{t.phone}</label>
             <div className="relative">
               <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" size={14} />
               <input 
@@ -121,7 +145,7 @@ const QuotationForm = ({ vehicle, onClose, onOpenFinance }: { vehicle: Vehicle, 
           </div>
         </div>
         <div className="space-y-1">
-          <label className="text-[10px] uppercase tracking-widest text-white/40">Email Address</label>
+          <label className="text-[10px] uppercase tracking-widest text-white/40">{t.email}</label>
           <div className="relative">
             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" size={14} />
             <input 
@@ -133,7 +157,7 @@ const QuotationForm = ({ vehicle, onClose, onOpenFinance }: { vehicle: Vehicle, 
           </div>
         </div>
         <div className="space-y-1">
-          <label className="text-[10px] uppercase tracking-widest text-white/40">Delivery Address</label>
+          <label className="text-[10px] uppercase tracking-widest text-white/40">{t.address}</label>
           <div className="relative">
             <MapPin className="absolute left-3 top-3 text-white/20" size={14} />
             <textarea 
@@ -153,10 +177,10 @@ const QuotationForm = ({ vehicle, onClose, onOpenFinance }: { vehicle: Vehicle, 
             checked={formData.financeNeeded}
             onChange={e => setFormData({...formData, financeNeeded: e.target.checked})}
           />
-          <label htmlFor="finance" className="text-sm font-bold cursor-pointer">I am interested in Financing / Loan options</label>
+          <label htmlFor="finance" className="text-sm font-bold cursor-pointer">{t.needFinance}</label>
         </div>
         <button type="submit" className="w-full bg-lemon-yellow text-black font-black py-3 rounded-xl shadow-lg hover:scale-[1.02] transition-all">
-          SUBMIT QUOTATION REQUEST
+          {t.submitRequest.toUpperCase()}
         </button>
       </form>
     </div>
@@ -239,12 +263,15 @@ const FinanceSheet = ({ onClose }: { onClose: () => void }) => {
 
 // --- Test Drive Form Component ---
 const TestDriveForm = ({ vehicle, onClose }: { vehicle: Vehicle, onClose: () => void }) => {
+  const { t } = useContext(LanguageContext);
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
     date: '',
     time: '',
   });
+
+  const [submitted, setSubmitted] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -256,12 +283,24 @@ const TestDriveForm = ({ vehicle, onClose }: { vehicle: Vehicle, onClose: () => 
         status: 'pending',
         createdAt: serverTimestamp()
       });
-      alert(`Test drive request submitted for ${vehicle.name}! We will contact you soon.`);
-      onClose();
+      setSubmitted(true);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'test_drives');
     }
   };
+
+  if (submitted) {
+    return (
+      <div className="glass-panel p-8 rounded-2xl border border-lemon-yellow/30 text-center space-y-4">
+        <div className="w-16 h-16 bg-lemon-yellow/20 rounded-full flex items-center justify-center mx-auto">
+          <CheckCircle className="text-lemon-yellow" size={32} />
+        </div>
+        <h3 className="text-2xl font-bold text-glow-yellow">{t.requestSubmitted.toUpperCase()}</h3>
+        <p className="text-white/60">{t.contactSoon}</p>
+        <button onClick={onClose} className="bg-electric-blue px-6 py-2 rounded-lg font-bold">{t.close.toUpperCase()}</button>
+      </div>
+    );
+  }
 
   return (
     <div className="glass-panel p-8 rounded-2xl border border-white/10 space-y-6 relative overflow-hidden bg-[radial-gradient(circle_at_top_right,rgba(0,123,255,0.1)_0%,transparent_50%)]">
@@ -269,7 +308,7 @@ const TestDriveForm = ({ vehicle, onClose }: { vehicle: Vehicle, onClose: () => 
         <X size={20} />
       </button>
       <div className="space-y-2">
-        <h2 className="text-2xl font-black tracking-tighter text-glow-blue uppercase italic">BOOK A TEST DRIVE</h2>
+        <h2 className="text-2xl font-black tracking-tighter text-glow-blue uppercase italic">{t.bookTestDrive.toUpperCase()}</h2>
         <div className="flex items-center gap-2 text-lemon-yellow font-bold text-sm">
           <Car size={16} />
           {vehicle.name} ({vehicle.model})
@@ -279,7 +318,7 @@ const TestDriveForm = ({ vehicle, onClose }: { vehicle: Vehicle, onClose: () => 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1">
-            <label className="text-[10px] uppercase tracking-widest text-white/40">Full Name</label>
+            <label className="text-[10px] uppercase tracking-widest text-white/40">{t.fullName}</label>
             <div className="relative">
               <User className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" size={14} />
               <input 
@@ -292,7 +331,7 @@ const TestDriveForm = ({ vehicle, onClose }: { vehicle: Vehicle, onClose: () => 
             </div>
           </div>
           <div className="space-y-1">
-            <label className="text-[10px] uppercase tracking-widest text-white/40">Phone Number</label>
+            <label className="text-[10px] uppercase tracking-widest text-white/40">{t.phone}</label>
             <div className="relative">
               <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" size={14} />
               <input 
@@ -307,7 +346,7 @@ const TestDriveForm = ({ vehicle, onClose }: { vehicle: Vehicle, onClose: () => 
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1">
-            <label className="text-[10px] uppercase tracking-widest text-white/40">Preferred Date</label>
+            <label className="text-[10px] uppercase tracking-widest text-white/40">{t.date}</label>
             <div className="relative">
               <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" size={14} />
               <input 
@@ -320,7 +359,7 @@ const TestDriveForm = ({ vehicle, onClose }: { vehicle: Vehicle, onClose: () => 
             </div>
           </div>
           <div className="space-y-1">
-            <label className="text-[10px] uppercase tracking-widest text-white/40">Preferred Time</label>
+            <label className="text-[10px] uppercase tracking-widest text-white/40">{t.time}</label>
             <div className="relative">
               <Clock className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" size={14} />
               <input 
@@ -335,7 +374,7 @@ const TestDriveForm = ({ vehicle, onClose }: { vehicle: Vehicle, onClose: () => 
         </div>
         <button type="submit" className="w-full bg-electric-blue text-white font-black py-3 rounded-xl shadow-lg hover:scale-[1.02] transition-all flex items-center justify-center gap-2">
           <Zap size={18} className="text-lemon-yellow" />
-          CONFIRM TEST DRIVE BOOKING
+          {t.submitRequest.toUpperCase()}
         </button>
       </form>
     </div>
@@ -343,13 +382,15 @@ const TestDriveForm = ({ vehicle, onClose }: { vehicle: Vehicle, onClose: () => 
 };
 
 // --- Vehicle Management Page ---
-const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onImageClick, isOwner }: { 
+const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onImageClick, onGoToReviews, isOwner }: { 
   vehicles: Vehicle[], 
   onRequestQuotation: (v: Vehicle) => void, 
   onBookTestDrive: (v: Vehicle) => void,
   onImageClick: (url: string) => void,
+  onGoToReviews: () => void,
   isOwner: boolean 
 }) => {
+  const { t } = useContext(LanguageContext);
   const [newVehicle, setNewVehicle] = useState<Partial<Vehicle>>({
     model: 'L-5',
     range: '200 KM',
@@ -560,14 +601,14 @@ const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onIm
                       className="w-full bg-electric-blue hover:bg-electric-blue/80 text-white text-[10px] font-black py-2 rounded-lg transition-all flex items-center justify-center gap-2"
                     >
                       <FileText size={12} />
-                      QUOTATION
+                      {t.quotation.toUpperCase()}
                     </button>
                     <button 
                       onClick={() => onBookTestDrive(v)}
                       className="w-full bg-lemon-yellow hover:bg-lemon-yellow/80 text-black text-[10px] font-black py-2 rounded-lg transition-all flex items-center justify-center gap-2"
                     >
                       <Calendar size={12} />
-                      TEST DRIVE
+                      {t.testDrive.toUpperCase()}
                     </button>
                   </div>
                 </div>
@@ -575,6 +616,432 @@ const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onIm
             </div>
           </motion.div>
         ))}
+      </div>
+    </div>
+  );
+};
+
+// --- Review Page Component ---
+const ReviewPage = ({ user, isOwner, vehicles, customerName }: { user: FirebaseUser | null, isOwner: boolean, vehicles: Vehicle[], customerName: string }) => {
+  const { t } = useContext(LanguageContext);
+  const [reviews, setReviews] = useState<any[]>([]);
+  const [newReview, setNewReview] = useState({ rating: 5, comment: '', vehicleId: '', vehicleType: '', customVehicleName: '' });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    const q = query(collection(db, 'reviews'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+      setReviews(list);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'reviews'));
+    return () => unsubscribe();
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newReview.comment.trim()) return;
+
+    setIsSubmitting(true);
+    try {
+      const selectedVehicle = vehicles.find(v => v.id === newReview.vehicleId);
+      await addDoc(collection(db, 'reviews'), {
+        userId: user?.uid || 'guest',
+        userName: user?.displayName || customerName || 'Guest Customer',
+        userPhoto: user?.photoURL || '',
+        rating: newReview.rating,
+        comment: newReview.comment,
+        vehicleId: newReview.vehicleId,
+        vehicleName: selectedVehicle ? selectedVehicle.name : newReview.customVehicleName,
+        vehicleType: selectedVehicle ? selectedVehicle.category : newReview.vehicleType,
+        createdAt: serverTimestamp()
+      });
+      setNewReview({ rating: 5, comment: '', vehicleId: '', vehicleType: '', customVehicleName: '' });
+      setSubmitted(true);
+      setTimeout(() => setSubmitted(false), 5000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'reviews');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm("Are you sure you want to delete this review?")) return;
+    try {
+      await deleteDoc(doc(db, 'reviews', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'reviews');
+    }
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto py-12 px-6 space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="text-center space-y-4">
+        <h2 className="text-4xl font-black tracking-tighter uppercase italic text-glow-blue">{t.reviews}</h2>
+        <p className="text-white/40 font-mono text-xs tracking-widest uppercase">{t.shareExperience}</p>
+      </div>
+
+      <div className="glass-panel p-8 rounded-3xl border border-white/10 space-y-6">
+        <h3 className="text-xl font-bold flex items-center gap-2">
+          <Star className="text-lemon-yellow" size={20} />
+          {t.writeReview}
+        </h3>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="space-y-2">
+              <label className="text-[10px] text-white/40 uppercase tracking-widest font-mono">{t.rating}</label>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button
+                    key={star}
+                    type="button"
+                    onClick={() => setNewReview({ ...newReview, rating: star })}
+                    className={`transition-all ${newReview.rating >= star ? 'text-lemon-yellow scale-110' : 'text-white/20'}`}
+                  >
+                    <Star fill={newReview.rating >= star ? 'currentColor' : 'none'} size={24} />
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] text-white/40 uppercase tracking-widest font-mono">{t.selectVehicle}</label>
+              <select
+                className="w-full bg-white/5 border border-white/10 rounded-xl p-3 focus:border-electric-blue outline-none text-sm"
+                value={newReview.vehicleId}
+                onChange={(e) => setNewReview({ ...newReview, vehicleId: e.target.value, customVehicleName: '', vehicleType: '' })}
+              >
+                <option value="" className="bg-black">{t.selectVehicle}</option>
+                {vehicles.map(v => (
+                  <option key={v.id} value={v.id} className="bg-black">{v.name}</option>
+                ))}
+                <option value="other" className="bg-black">Other / Not Listed</option>
+              </select>
+            </div>
+
+            {newReview.vehicleId === 'other' && (
+              <>
+                <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                  <label className="text-[10px] text-white/40 uppercase tracking-widest font-mono">Vehicle Type</label>
+                  <select
+                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 focus:border-electric-blue outline-none text-sm"
+                    value={newReview.vehicleType}
+                    onChange={(e) => setNewReview({ ...newReview, vehicleType: e.target.value })}
+                  >
+                    <option value="" className="bg-black">Select Type</option>
+                    <option value="Passenger" className="bg-black">Passenger</option>
+                    <option value="Cargo" className="bg-black">Cargo</option>
+                    <option value="Tipper" className="bg-black">Tipper</option>
+                    <option value="Loader" className="bg-black">Loader</option>
+                  </select>
+                </div>
+                <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                  <label className="text-[10px] text-white/40 uppercase tracking-widest font-mono">Vehicle Name (Optional)</label>
+                  <input
+                    type="text"
+                    placeholder="Enter vehicle model..."
+                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 focus:border-electric-blue outline-none text-sm"
+                    value={newReview.customVehicleName}
+                    onChange={(e) => setNewReview({ ...newReview, customVehicleName: e.target.value })}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+          <textarea
+            required
+            rows={3}
+            placeholder="Share your experience with Garud Automobiles..."
+            className="w-full bg-white/5 border border-white/10 rounded-xl p-4 focus:border-electric-blue outline-none resize-none"
+            value={newReview.comment}
+            onChange={(e) => setNewReview({ ...newReview, comment: e.target.value })}
+          />
+          {submitted && (
+            <motion.div 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-4 bg-green-500/20 border border-green-500/50 rounded-xl text-green-400 text-sm font-bold text-center"
+            >
+              REVIEW POSTED SUCCESSFULLY! THANK YOU.
+            </motion.div>
+          )}
+          <button
+            disabled={isSubmitting}
+            type="submit"
+            className="bg-electric-blue hover:bg-electric-blue/80 text-white font-black px-8 py-3 rounded-xl transition-all disabled:opacity-50"
+          >
+            {isSubmitting ? 'SUBMITTING...' : t.postReview.toUpperCase()}
+          </button>
+        </form>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {reviews.map((review) => (
+          <motion.div
+            key={review.id}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="glass-panel p-6 rounded-2xl border border-white/5 space-y-4"
+          >
+            <div className="flex justify-between items-start">
+              <div className="flex items-center gap-3">
+                <img src={review.userPhoto} alt={review.userName} className="w-10 h-10 rounded-full border border-white/10" />
+                <div>
+                  <h4 className="font-bold text-sm">{review.userName}</h4>
+                  <div className="flex items-center gap-2">
+                    <div className="flex gap-1">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <Star
+                          key={star}
+                          size={10}
+                          className={review.rating >= star ? 'text-lemon-yellow' : 'text-white/10'}
+                          fill={review.rating >= star ? 'currentColor' : 'none'}
+                        />
+                      ))}
+                    </div>
+                    {review.vehicleName && (
+                      <span className="text-[10px] text-lemon-yellow font-mono uppercase tracking-tighter bg-lemon-yellow/10 px-2 py-0.5 rounded border border-lemon-yellow/20">
+                        {review.vehicleName}
+                      </span>
+                    )}
+                    {review.vehicleType && (
+                      <span className="text-[10px] text-white/40 font-mono uppercase tracking-tighter bg-white/5 px-2 py-0.5 rounded border border-white/10">
+                        {review.vehicleType}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] text-white/20 font-mono">
+                  {review.createdAt?.toDate ? review.createdAt.toDate().toLocaleDateString() : 'Just now'}
+                </span>
+                {isOwner && (
+                  <button
+                    onClick={() => handleDelete(review.id)}
+                    className="p-1 hover:bg-red-500/20 rounded transition-all text-white/20 hover:text-red-500"
+                    title="Delete Review"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+            </div>
+            <p className="text-sm text-white/70 italic leading-relaxed">"{review.comment}"</p>
+          </motion.div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// --- Owner Dashboard Component ---
+const OwnerDashboard = () => {
+  const { lang, t } = useContext(LanguageContext);
+  const [quotations, setQuotations] = useState<any[]>([]);
+  const [testDrives, setTestDrives] = useState<any[]>([]);
+  const [activeView, setActiveView] = useState<'quotations' | 'test_drives'>('quotations');
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest');
+  const [searchTerm, setSearchTerm] = useState('');
+
+  useEffect(() => {
+    const qQ = query(collection(db, 'quotations'), orderBy('createdAt', sortBy === 'newest' ? 'desc' : 'asc'));
+    const unsubscribeQ = onSnapshot(qQ, (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+      setQuotations(list);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'quotations'));
+
+    const qT = query(collection(db, 'test_drives'), orderBy('createdAt', sortBy === 'newest' ? 'desc' : 'asc'));
+    const unsubscribeT = onSnapshot(qT, (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+      setTestDrives(list);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'test_drives'));
+
+    return () => {
+      unsubscribeQ();
+      unsubscribeT();
+    };
+  }, [sortBy]);
+
+  const filteredItems = (activeView === 'quotations' ? quotations : testDrives).filter(item => {
+    const matchesStatus = filterStatus === 'all' || item.status === filterStatus;
+    const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                         item.phone.includes(searchTerm) ||
+                         (item.email && item.email.toLowerCase().includes(searchTerm.toLowerCase()));
+    return matchesStatus && matchesSearch;
+  });
+
+  return (
+    <div className="max-w-6xl mx-auto py-12 px-6 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+        <div className="space-y-1 text-center md:text-left">
+          <h2 className="text-3xl font-black tracking-tighter uppercase italic text-glow-blue">{t.ownerDashboard}</h2>
+          <p className="text-white/40 font-mono text-xs tracking-widest uppercase">{t.manageInquiries}</p>
+        </div>
+        <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
+          <button
+            onClick={() => setActiveView('quotations')}
+            className={`px-6 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+              activeView === 'quotations' ? 'bg-electric-blue text-white shadow-lg' : 'text-white/40 hover:text-white'
+            }`}
+          >
+            <ClipboardList size={14} />
+            {t.quotation.toUpperCase()} ({quotations.length})
+          </button>
+          <button
+            onClick={() => setActiveView('test_drives')}
+            className={`px-6 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+              activeView === 'test_drives' ? 'bg-electric-blue text-white shadow-lg' : 'text-white/40 hover:text-white'
+            }`}
+          >
+            <Car size={14} />
+            {t.testDrive.toUpperCase()} ({testDrives.length})
+          </button>
+        </div>
+      </div>
+
+      {/* Filters & Search */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="relative md:col-span-2">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" size={16} />
+          <input
+            type="text"
+            placeholder={t.search}
+            className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-10 pr-4 focus:border-electric-blue outline-none text-sm"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+        <select
+          className="bg-white/5 border border-white/10 rounded-xl py-3 px-4 focus:border-electric-blue outline-none text-sm"
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value)}
+        >
+          <option value="all" className="bg-black">{t.all} {t.status}</option>
+          <option value="pending" className="bg-black">{t.pending}</option>
+          <option value="completed" className="bg-black">{t.completed}</option>
+        </select>
+        <select
+          className="bg-white/5 border border-white/10 rounded-xl py-3 px-4 focus:border-electric-blue outline-none text-sm"
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as any)}
+        >
+          <option value="newest" className="bg-black">{t.sortBy}: {t.newest}</option>
+          <option value="oldest" className="bg-black">{t.sortBy}: {t.oldest}</option>
+        </select>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="glass-panel p-6 rounded-2xl border border-white/5 flex items-center gap-4">
+          <div className="w-12 h-12 bg-electric-blue/20 rounded-xl flex items-center justify-center">
+            <Users className="text-electric-blue" size={24} />
+          </div>
+          <div>
+            <p className="text-[10px] text-white/40 uppercase tracking-widest">{t.totalLeads}</p>
+            <p className="text-2xl font-black">{quotations.length + testDrives.length}</p>
+          </div>
+        </div>
+        <div className="glass-panel p-6 rounded-2xl border border-white/5 flex items-center gap-4">
+          <div className="w-12 h-12 bg-lemon-yellow/20 rounded-xl flex items-center justify-center">
+            <BarChart3 className="text-lemon-yellow" size={24} />
+          </div>
+          <div>
+            <p className="text-[10px] text-white/40 uppercase tracking-widest">{t.conversionRate}</p>
+            <p className="text-2xl font-black">
+              {(() => {
+                const total = quotations.length + testDrives.length;
+                const completed = quotations.filter(q => q.status === 'completed').length + testDrives.filter(t => t.status === 'completed').length;
+                return total > 0 ? ((completed / total) * 100).toFixed(1) : '0';
+              })()}%
+            </p>
+          </div>
+        </div>
+        <div className="glass-panel p-6 rounded-2xl border border-white/5 flex items-center gap-4">
+          <div className="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center">
+            <Zap className="text-green-500" size={24} />
+          </div>
+          <div>
+            <p className="text-[10px] text-white/40 uppercase tracking-widest">{t.activeInquiries}</p>
+            <p className="text-2xl font-black">{quotations.filter(q => q.status === 'pending').length + testDrives.filter(t => t.status === 'pending').length}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="glass-panel rounded-3xl border border-white/10 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-white/5 border-b border-white/10">
+                <th className="px-6 py-4 text-[10px] uppercase tracking-widest text-white/40">{t.customer}</th>
+                <th className="px-6 py-4 text-[10px] uppercase tracking-widest text-white/40">{t.vehicle}</th>
+                <th className="px-6 py-4 text-[10px] uppercase tracking-widest text-white/40">{t.details}</th>
+                <th className="px-6 py-4 text-[10px] uppercase tracking-widest text-white/40">{t.date}</th>
+                <th className="px-6 py-4 text-[10px] uppercase tracking-widest text-white/40">{t.status}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {filteredItems.map((item) => (
+                <tr key={item.id} className="hover:bg-white/[0.02] transition-colors">
+                  <td className="px-6 py-4">
+                    <div className="space-y-1">
+                      <p className="font-bold text-sm">{item.name}</p>
+                      <p className="text-xs text-white/40">{item.phone}</p>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="space-y-1">
+                      <p className="font-bold text-sm">{item.vehicleName}</p>
+                      <p className="text-[10px] text-white/40 uppercase">{item.vehicleModel}</p>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="max-w-xs truncate text-xs text-white/60">
+                      {activeView === 'quotations' ? (
+                        <span>{item.address} {item.financeNeeded && '• Finance Needed'}</span>
+                      ) : (
+                        <span>{item.date} at {item.time}</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <p className="text-[10px] font-mono text-white/40">
+                      {item.createdAt?.toDate ? item.createdAt.toDate().toLocaleDateString() : 'N/A'}
+                    </p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                        item.status === 'pending' ? 'bg-lemon-yellow/20 text-lemon-yellow' : 'bg-green-500/20 text-green-500'
+                      }`}>
+                        {item.status === 'pending' ? t.pending : t.completed}
+                      </span>
+                      {item.status === 'pending' && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              await updateDoc(doc(db, activeView, item.id), { status: 'completed' });
+                            } catch (error) {
+                              handleFirestoreError(error, OperationType.UPDATE, `${activeView}/${item.id}`);
+                            }
+                          }}
+                          className="p-1 hover:bg-white/10 rounded text-white/40 hover:text-green-500 transition-colors"
+                          title="Mark as Completed"
+                        >
+                          <CheckCircle size={14} />
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -634,6 +1101,7 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
 
 // --- Contact Page Component ---
 function ContactPage() {
+  const { t } = useContext(LanguageContext);
   return (
     <div className="max-w-4xl mx-auto py-12 px-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="glass-panel p-12 rounded-3xl border border-white/10 text-center space-y-8 bg-[radial-gradient(circle_at_top_right,rgba(0,123,255,0.1)_0%,transparent_50%)]">
@@ -642,12 +1110,12 @@ function ContactPage() {
         </div>
         
         <div className="space-y-4">
-          <h2 className="text-4xl font-black tracking-tighter uppercase italic">GET IN TOUCH</h2>
+          <h2 className="text-4xl font-black tracking-tighter uppercase italic">{t.contact}</h2>
           <p className="text-white/60 font-mono text-sm tracking-widest uppercase">Garud Automobiles - Berhampur</p>
         </div>
 
         <div className="py-8 border-y border-white/5">
-          <p className="text-xl text-white/80 mb-4">For more information, call to:</p>
+          <p className="text-xl text-white/80 mb-4">{t.moreInfo}</p>
           <a 
             href="tel:8221822926" 
             className="text-5xl md:text-7xl font-black text-lemon-yellow tracking-tighter hover:scale-105 transition-transform inline-block"
@@ -674,8 +1142,8 @@ function ContactPage() {
           </div>
         </div>
 
-        <div className="pt-8 border-t border-white/5">
-          <p className="text-[10px] text-white/30 uppercase tracking-[0.2em] font-mono">
+        <div className="pt-12 text-center opacity-30">
+          <p className="text-[10px] uppercase tracking-widest font-mono">
             Note: If the app does not work, please open it the next day.
           </p>
         </div>
@@ -693,13 +1161,21 @@ export default function App() {
   );
 }
 
+const LanguageContext = React.createContext<{ lang: Language, t: any }>({ lang: 'en', t: translations.en });
+
 function AppContent() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userRole, setUserRole] = useState<'admin' | 'viewer'>('viewer');
-  const [activeTab, setActiveTab] = useState<'script' | 'vehicles' | 'contact'>('script');
+  const [activeTab, setActiveTab] = useState<'script' | 'vehicles' | 'contact' | 'reviews' | 'dashboard'>('script');
+  const [lang, setLang] = useState<Language | null>(null);
+  const [showLangSelector, setShowLangSelector] = useState(true);
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const t = translations[lang || 'en'];
   const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [aiInput, setAiInput] = useState('');
   const [isOwner, setIsOwner] = useState(false);
   const [transcription, setTranscription] = useState<string[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>(INITIAL_VEHICLES);
@@ -709,9 +1185,38 @@ function AppContent() {
   const [showFinanceSheet, setShowFinanceSheet] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  const [ownerPassword, setOwnerPassword] = useState('');
+  const [passwordError, setPasswordError] = useState(false);
+
   // Auth & Role Sync
   useEffect(() => {
     testConnection();
+    
+    // Load saved owner status
+    const savedOwner = localStorage.getItem('garud_is_owner');
+    if (savedOwner === 'true') {
+      setIsOwner(true);
+      setUserRole('admin');
+      setShowLangSelector(false);
+      if (!lang) setLang('en');
+    }
+
+    // Load saved language and user info
+    const saved = localStorage.getItem('garud_user_info');
+    if (saved) {
+      try {
+        const { name, phone, lang: savedLang } = JSON.parse(saved);
+        if (name && phone && savedLang) {
+          setCustomerName(name);
+          setCustomerPhone(phone);
+          setLang(savedLang);
+          setShowLangSelector(false);
+        }
+      } catch (e) {
+        console.error("Error parsing saved info:", e);
+      }
+    }
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       try {
         setUser(firebaseUser);
@@ -720,35 +1225,62 @@ function AppContent() {
           const userDocRef = doc(db, 'users', firebaseUser.uid);
           const userDoc = await getDoc(userDocRef);
           
+          // Check if this is the owner email (keeping as backup)
+          const isOwnerEmail = firebaseUser.email === 'sarita.riusriu121212@gmail.com';
+          
           if (userDoc.exists()) {
-            setUserRole(userDoc.data().role);
-            setIsOwner(userDoc.data().role === 'admin');
+            const role = isOwnerEmail ? 'admin' : userDoc.data().role;
+            // Only override if not already set by password
+            if (!isOwner) {
+              setUserRole(role);
+              setIsOwner(role === 'admin');
+              if (role === 'admin') {
+                setShowLangSelector(false);
+                if (!lang) setLang('en');
+              }
+            }
           } else {
-            // New user, default to viewer
+            // New user
+            const role = isOwnerEmail ? 'admin' : 'viewer';
             const newUser = {
               displayName: firebaseUser.displayName || 'Anonymous',
               email: firebaseUser.email || '',
-              role: 'viewer',
+              role: role,
               photoURL: firebaseUser.photoURL || ''
             };
             await setDoc(userDocRef, newUser);
-            setUserRole('viewer');
-            setIsOwner(false);
+            if (!isOwner) {
+              setUserRole(role);
+              setIsOwner(role === 'admin');
+              if (role === 'admin') {
+                setShowLangSelector(false);
+                if (!lang) setLang('en');
+              }
+            }
           }
-        } else {
-          setUserRole('viewer');
-          setIsOwner(false);
         }
       } catch (error) {
         console.error("Auth state sync error:", error);
-        setUserRole('viewer');
-        setIsOwner(false);
       } finally {
         setLoading(false);
       }
     });
     return () => unsubscribe();
-  }, []);
+  }, [isOwner]);
+
+  const handleOwnerLogin = () => {
+    if (ownerPassword === '2122011') {
+      setIsOwner(true);
+      setUserRole('admin');
+      setShowLangSelector(false);
+      if (!lang) setLang('en');
+      localStorage.setItem('garud_is_owner', 'true');
+      setPasswordError(false);
+    } else {
+      setPasswordError(true);
+      setTimeout(() => setPasswordError(false), 3000);
+    }
+  };
 
   // Vehicles Sync
   useEffect(() => {
@@ -804,7 +1336,7 @@ function AppContent() {
       processorRef.current = audioContextRef.current.createScriptProcessor(4096, 1, 1);
 
       const sessionPromise = ai.live.connect({
-        model: "gemini-2.5-flash-native-audio-preview-12-2025",
+        model: "gemini-3.1-flash-live-preview",
         callbacks: {
           onopen: () => {
             setIsRecording(true);
@@ -831,7 +1363,7 @@ function AppContent() {
             if (parts) {
               for (const part of parts) {
                 if (part.text) {
-                  setTranscription(prev => [...prev.slice(-4), `AI: ${part.text}`]);
+                  setTranscription(prev => [...prev.slice(-10), `AI: ${part.text}`]);
                 }
                 if (part.inlineData?.data) {
                   const base64Audio = part.inlineData.data;
@@ -874,7 +1406,8 @@ function AppContent() {
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
           },
-          systemInstruction: "You are an expert on Garud Automobiles and the commercial script provided. Answer questions about the script, the vehicles (L-5, L-3), the 200km range, the 3-year battery warranty, and the exchange offers in Berhampur Odiya or English as requested.",
+          tools: [{ googleSearch: {} }],
+          systemInstruction: "You are an expert on Garud Automobiles. ONLY answer questions about vehicles, the Garud EVCO range (L-5, L-3), 200km range, 3-year battery warranty, and exchange offers. If asked about anything else, politely redirect to Garud vehicles. Use Google Search to provide up-to-date info on electric vehicle trends if relevant to Garud. Respond in Berhampur Odiya or English.",
           inputAudioTranscription: {},
           outputAudioTranscription: {},
         },
@@ -884,6 +1417,40 @@ function AppContent() {
     } catch (err) {
       console.error("Failed to start Live session:", err);
       setTranscription(prev => [...prev, "Error: Could not access microphone or connect to AI."]);
+    }
+  };
+
+  const handleSendText = () => {
+    if (!aiInput.trim()) return;
+    setTranscription(prev => [...prev.slice(-10), `You: ${aiInput}`]);
+    if (sessionRef.current) {
+      sessionRef.current.sendRealtimeInput({
+        text: aiInput
+      });
+    } else {
+      // If session not started, start it first? 
+      // For now, just show error or start it.
+      startLiveSession().then(() => {
+        if (sessionRef.current) {
+          sessionRef.current.sendRealtimeInput({ text: aiInput });
+        }
+      });
+    }
+    setAiInput('');
+  };
+
+  const handleImageInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && sessionRef.current) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64Data = (reader.result as string).split(',')[1];
+        sessionRef.current?.sendRealtimeInput({
+          video: { data: base64Data, mimeType: file.type }
+        });
+        setTranscription(prev => [...prev, "Sent image for analysis..."]);
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -914,8 +1481,113 @@ function AppContent() {
     );
   }
 
+  if (showLangSelector || !lang) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center p-6 relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-electric-blue/10 via-transparent to-lemon-yellow/10 opacity-50" />
+        <div className="glass-panel p-8 md:p-12 rounded-[40px] border border-white/10 max-w-lg w-full text-center space-y-8 relative z-10">
+          <div className="w-16 h-16 bg-electric-blue rounded-2xl flex items-center justify-center mx-auto shadow-[0_0_40px_rgba(0,102,255,0.3)]">
+            <Zap className="text-lemon-yellow w-8 h-8" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-2xl font-black tracking-tighter uppercase italic">WELCOME TO GARUD</h2>
+            <p className="text-white/40 font-mono text-[10px] tracking-[0.2em] uppercase">Initial Setup Required</p>
+          </div>
+
+          <div className="space-y-4 text-left">
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase tracking-widest text-white/40 ml-1">Phone Number</label>
+              <div className="relative">
+                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" size={14} />
+                <input 
+                  type="tel" 
+                  placeholder="Enter your phone"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-3 focus:border-electric-blue outline-none transition-all"
+                  value={customerPhone}
+                  onChange={e => setCustomerPhone(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase tracking-widest text-white/40 ml-1">Full Name</label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" size={14} />
+                <input 
+                  type="text" 
+                  placeholder="Enter your name"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-3 focus:border-electric-blue outline-none transition-all"
+                  value={customerName}
+                  onChange={e => setCustomerName(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-white/40 font-mono text-[10px] tracking-[0.2em] uppercase">STEP 2: SELECT YOUR LANGUAGE</p>
+              <div className="grid grid-cols-1 gap-3">
+                {[
+                  { id: 'en', label: 'ENGLISH', sub: 'Global Standard' },
+                  { id: 'or', label: 'ଓଡ଼ିଆ', sub: 'ସ୍ଥାନୀୟ ଗର୍ବ' },
+                  { id: 'te', label: 'తెలుగు', sub: 'ప్రాంతీయ పరిధి' }
+                ].map((l) => (
+                  <button
+                    key={l.id}
+                    disabled={!customerName || !customerPhone}
+                    onClick={() => {
+                      const selectedLang = l.id as Language;
+                      setLang(selectedLang);
+                      setShowLangSelector(false);
+                      localStorage.setItem('garud_user_info', JSON.stringify({
+                        name: customerName,
+                        phone: customerPhone,
+                        lang: selectedLang
+                      }));
+                    }}
+                    className="group relative p-4 rounded-2xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.05] hover:border-electric-blue/50 transition-all text-left flex items-center justify-between disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <div>
+                      <p className="font-black text-lg tracking-tight group-hover:text-electric-blue transition-colors">{l.label}</p>
+                      <p className="text-[10px] text-white/20 uppercase tracking-widest font-mono">{l.sub}</p>
+                    </div>
+                    <ChevronRight className="text-white/10 group-hover:text-electric-blue group-hover:translate-x-1 transition-all" size={20} />
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            <div className="pt-6 border-t border-white/5 space-y-3">
+              <p className="text-white/20 font-mono text-[8px] tracking-[0.2em] uppercase mb-1 text-center">OWNER ACCESS</p>
+              <div className="flex gap-2">
+                <input 
+                  type="password"
+                  placeholder="Enter Owner Password"
+                  className={`flex-1 bg-white/5 border ${passwordError ? 'border-red-500' : 'border-white/10'} rounded-xl px-4 py-3 focus:border-lemon-yellow outline-none transition-all text-sm`}
+                  value={ownerPassword}
+                  onChange={e => setOwnerPassword(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleOwnerLogin()}
+                />
+                <button
+                  onClick={handleOwnerLogin}
+                  className="bg-lemon-yellow text-black font-black px-4 py-3 rounded-xl hover:bg-lemon-yellow/80 transition-all"
+                >
+                  <Check size={20} />
+                </button>
+              </div>
+              {passwordError && (
+                <p className="text-red-500 text-[10px] uppercase font-bold text-center animate-pulse">Invalid Password</p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-black text-white selection:bg-electric-blue/30">
+    <LanguageContext.Provider value={{ lang: lang || 'en', t }}>
+      <div className="min-h-screen bg-black text-white selection:bg-electric-blue/30">
       {/* Header */}
       {/* Owner's Message Ticker */}
       <div className="fixed top-[72px] w-full z-40 bg-lemon-yellow/90 backdrop-blur-md text-black py-1 overflow-hidden border-b border-black/10">
@@ -943,38 +1615,82 @@ function AppContent() {
           </div>
         </div>
         
-        <nav className="flex items-center gap-1 bg-white/5 p-1 rounded-full border border-white/10 overflow-x-auto no-scrollbar">
-          <button
-            onClick={() => setActiveTab('script')}
-            className={`px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeTab === 'script' ? 'bg-electric-blue text-white' : 'text-white/50 hover:text-white'
-            }`}
-          >
-            <Layout size={14} />
-            SCRIPT
-          </button>
-          <button
-            onClick={() => setActiveTab('vehicles')}
-            className={`px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeTab === 'vehicles' ? 'bg-electric-blue text-white' : 'text-white/50 hover:text-white'
-            }`}
-          >
-            <Car size={14} />
-            FLEET
-          </button>
-          <button
-            onClick={() => setActiveTab('contact')}
-            className={`px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeTab === 'contact' ? 'bg-electric-blue text-white' : 'text-white/50 hover:text-white'
-            }`}
-          >
-            <Phone size={14} />
-            CONTACT
-          </button>
-        </nav>
+          <nav className="flex items-center gap-1 bg-white/5 p-1 rounded-full border border-white/10 overflow-x-auto no-scrollbar">
+            <button
+              onClick={() => setActiveTab('script')}
+              className={`px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'script' ? 'bg-electric-blue text-white' : 'text-white/50 hover:text-white'
+              }`}
+            >
+              <Layout size={14} />
+              {t.commercial}
+            </button>
+            <button
+              onClick={() => setActiveTab('vehicles')}
+              className={`px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'vehicles' ? 'bg-electric-blue text-white' : 'text-white/50 hover:text-white'
+              }`}
+            >
+              <Car size={14} />
+              {t.fleet}
+            </button>
+            <button
+              onClick={() => setActiveTab('contact')}
+              className={`px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'contact' ? 'bg-electric-blue text-white' : 'text-white/50 hover:text-white'
+              }`}
+            >
+              <Phone size={14} />
+              {t.contact}
+            </button>
+            <button
+              onClick={() => setActiveTab('reviews')}
+              className={`px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'reviews' ? 'bg-electric-blue text-white' : 'text-white/50 hover:text-white'
+              }`}
+            >
+              <Star size={14} />
+              {t.reviews}
+            </button>
+            {!isOwner && (
+              <button
+                onClick={() => setShowLangSelector(true)}
+                className="px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap text-white/50 hover:text-lemon-yellow hover:bg-white/5"
+              >
+                <User size={14} />
+                OWNER LOGIN
+              </button>
+            )}
+            {isOwner && (
+              <button
+                onClick={() => setActiveTab('dashboard')}
+                className={`px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+                  activeTab === 'dashboard' ? 'bg-lemon-yellow text-black' : 'text-white/50 hover:text-white'
+                }`}
+              >
+                <BarChart3 size={14} />
+                {t.dashboard}
+              </button>
+            )}
+            {isOwner && (
+              <button
+                onClick={() => {
+                  setIsOwner(false);
+                  setUserRole('viewer');
+                  localStorage.removeItem('garud_is_owner');
+                  setShowLangSelector(true);
+                  setActiveTab('script');
+                }}
+                className="px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap text-red-500 hover:bg-red-500/10"
+              >
+                <LogOut size={14} />
+                LOGOUT
+              </button>
+            )}
+          </nav>
 
         <div className="flex items-center gap-4">
-          {user ? (
+          {user && (
             <div className="flex items-center gap-3">
               <div className="text-right hidden sm:block">
                 <p className="text-xs font-bold">{user.displayName}</p>
@@ -988,13 +1704,6 @@ function AppContent() {
                 LOGOUT
               </button>
             </div>
-          ) : (
-            <button 
-              onClick={loginWithGoogle}
-              className="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-full text-xs font-bold transition-all"
-            >
-              OWNER LOGIN
-            </button>
           )}
 
           {userRole === 'admin' && (
@@ -1009,17 +1718,18 @@ function AppContent() {
             </button>
           )}
 
-          {userRole === 'admin' && (
-            <button 
-              onClick={() => setIsLiveMode(!isLiveMode)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold transition-all ${
-                isLiveMode ? 'bg-lemon-yellow text-black' : 'bg-white/10 hover:bg-white/20'
-              }`}
-            >
-              <MessageSquare size={14} />
-              {isLiveMode ? 'EXIT LIVE CHAT' : 'AI VOICE GUIDE'}
-            </button>
-          )}
+          <button 
+            onClick={() => {
+              setIsLiveMode(!isLiveMode);
+              if (!isLiveMode) setActiveTab('script');
+            }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold transition-all ${
+              isLiveMode ? 'bg-lemon-yellow text-black' : 'bg-white/10 hover:bg-white/20'
+            }`}
+          >
+            <MessageSquare size={14} />
+            {isLiveMode ? 'EXIT LIVE CHAT' : 'AI VOICE GUIDE'}
+          </button>
         </div>
       </header>
 
@@ -1105,36 +1815,70 @@ function AppContent() {
             {/* Right Column: Info & AI */}
             <div className="lg:col-span-4 space-y-6">
               {isLiveMode ? (
-                <div className="glass-panel rounded-2xl border border-lemon-yellow/30 p-6 h-full flex flex-col">
+                <div className="glass-panel rounded-2xl border border-lemon-yellow/30 p-6 h-full flex flex-col min-h-[500px]">
                   <div className="flex items-center justify-between mb-6">
                     <h3 className="font-bold text-lemon-yellow flex items-center gap-2">
                       <Zap size={18} />
-                      LIVE AI ASSISTANT
+                      GARUD AI ASSISTANT
                     </h3>
                     <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-white/20'}`} />
                   </div>
                   
                   <div className="flex-1 space-y-4 overflow-y-auto mb-6 max-h-[400px] scrollbar-hide">
                     {transcription.length === 0 ? (
-                      <p className="text-white/30 text-sm italic">Ask me about the Garud EVCO range, warranty, or script details...</p>
+                      <div className="flex flex-col items-center justify-center h-full text-center space-y-4 opacity-30">
+                        <Zap size={48} className="text-lemon-yellow" />
+                        <p className="text-sm italic">Ask me anything about Garud Vehicles...</p>
+                      </div>
                     ) : (
                       transcription.map((t, i) => (
-                        <div key={i} className={`p-3 rounded-lg text-sm ${t.startsWith('AI:') ? 'bg-electric-blue/20 border border-electric-blue/30' : 'bg-white/5'}`}>
+                        <div key={i} className={`p-3 rounded-xl text-sm ${t.startsWith('AI:') ? 'bg-electric-blue/20 border border-electric-blue/30 self-start' : 'bg-white/5 self-end ml-8'}`}>
                           {t}
                         </div>
                       ))
                     )}
                   </div>
 
-                  <button
-                    onClick={isRecording ? stopLiveSession : startLiveSession}
-                    className={`w-full py-4 rounded-xl flex items-center justify-center gap-3 font-bold transition-all ${
-                      isRecording ? 'bg-red-500/20 text-red-500 border border-red-500/50' : 'bg-electric-blue text-white hover:bg-electric-blue/80'
-                    }`}
-                  >
-                    {isRecording ? <MicOff size={20} /> : <Mic size={20} />}
-                    {isRecording ? 'STOP LISTENING' : 'START CONVERSATION'}
-                  </button>
+                  <div className="space-y-4">
+                    <div className="relative flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl p-2 focus-within:border-electric-blue transition-all">
+                      <Search size={18} className="ml-2 text-white/20" />
+                      <input 
+                        type="file" 
+                        id="ai-camera" 
+                        className="hidden" 
+                        accept="image/*"
+                        onChange={handleImageInput}
+                      />
+                      <label htmlFor="ai-camera" className="p-2 hover:bg-white/10 rounded-xl cursor-pointer text-white/40 hover:text-white transition-all">
+                        <Camera size={20} />
+                      </label>
+                      <input 
+                        type="text"
+                        placeholder="Ask about vehicles..."
+                        className="flex-1 bg-transparent border-none outline-none text-sm py-2"
+                        value={aiInput}
+                        onChange={(e) => setAiInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSendText()}
+                      />
+                      <button 
+                        onClick={isRecording ? stopLiveSession : startLiveSession}
+                        className={`p-2 rounded-xl transition-all ${isRecording ? 'text-red-500 bg-red-500/10' : 'text-white/40 hover:text-white'}`}
+                      >
+                        {isRecording ? <MicOff size={20} /> : <Mic size={20} />}
+                      </button>
+                      <button 
+                        onClick={handleSendText}
+                        className="p-2 bg-electric-blue text-white rounded-xl hover:bg-electric-blue/80 transition-all"
+                      >
+                        <Send size={18} />
+                      </button>
+                    </div>
+                    {isRecording && (
+                      <p className="text-[10px] text-center text-red-500 font-bold uppercase tracking-widest animate-pulse">
+                        Live Voice Active - I am listening...
+                      </p>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-6">
@@ -1213,8 +1957,13 @@ function AppContent() {
             onRequestQuotation={(v) => setSelectedVehicleForQuotation(v)}
             onBookTestDrive={(v) => setSelectedVehicleForTestDrive(v)}
             onImageClick={(url) => setSelectedImage(url)}
+            onGoToReviews={() => setActiveTab('reviews')}
             isOwner={isOwner}
           />
+        ) : activeTab === 'reviews' ? (
+          <ReviewPage user={user} isOwner={isOwner} vehicles={vehicles} customerName={customerName} />
+        ) : (activeTab === 'dashboard' && isOwner) ? (
+          <OwnerDashboard />
         ) : (
           <ContactPage />
         )}        {/* Modals */}
@@ -1322,5 +2071,6 @@ function AppContent() {
         />
       </footer>
     </div>
+    </LanguageContext.Provider>
   );
 }

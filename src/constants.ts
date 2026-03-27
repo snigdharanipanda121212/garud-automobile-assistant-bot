@@ -13,6 +13,7 @@ export interface Vehicle {
   id: string;
   name: string;
   model: 'L-3' | 'L-5';
+  category: 'Passenger' | 'Cargo' | 'Tipper' | 'Loader';
   range: string;
   batteryWarranty: string;
   vehicleWarranty: string;
@@ -25,6 +26,7 @@ export const INITIAL_VEHICLES: Vehicle[] = [
     id: '1',
     name: 'Garud Passenger Special',
     model: 'L-5',
+    category: 'Passenger',
     range: '200 KM',
     batteryWarranty: '3 Years',
     vehicleWarranty: '1 Year',
@@ -35,6 +37,7 @@ export const INITIAL_VEHICLES: Vehicle[] = [
     id: '2',
     name: 'Garud Cargo Pro',
     model: 'L-3',
+    category: 'Cargo',
     range: '150 KM',
     batteryWarranty: '3 Years',
     vehicleWarranty: '1 Year',
@@ -107,3 +110,42 @@ export const COMMERCIAL_SCRIPT: Scene[] = [
 ];
 
 export const OWNER_MESSAGE = "Welcome to Garud Automobiles! We are committed to providing the best electric vehicle solutions in Berhampur. Visit us for a test drive today!";
+
+export interface Review {
+  id: string;
+  userName: string;
+  userPhoto?: string;
+  rating: number;
+  comment: string;
+  vehicleId?: string;
+  vehicleName?: string;
+  vehicleType?: string;
+  createdAt: any;
+}
+
+export interface QuotationRequest {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+  address: string;
+  financeNeeded: boolean;
+  vehicleId: string;
+  vehicleName: string;
+  vehicleModel: string;
+  vehiclePrice: string;
+  status: 'pending' | 'contacted' | 'closed';
+  createdAt: any;
+}
+
+export interface TestDriveBooking {
+  id: string;
+  name: string;
+  phone: string;
+  date: string;
+  time: string;
+  vehicleId: string;
+  vehicleName: string;
+  status: 'pending' | 'confirmed' | 'completed' | 'cancelled';
+  createdAt: any;
+}

@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { initializeAuth, browserLocalPersistence, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
 import { getFirestore, collection, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, query, where, orderBy, limit, getDocFromServer, Timestamp } from 'firebase/firestore';
 
 // Import the Firebase configuration
@@ -8,12 +8,7 @@ import firebaseConfig from '../firebase-applet-config.json';
 // Initialize Firebase SDK
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-
-// Use initializeAuth to avoid potential issues with getAuth in some environments
-export const auth = initializeAuth(app, {
-  persistence: browserLocalPersistence
-});
-
+export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
 // Track pending login to avoid multiple simultaneous popups
@@ -84,13 +79,38 @@ export async function testConnection() {
 
 // Auth functions
 export const loginWithGoogle = async () => {
-  if (isLoginPending) return;
+  console.log('loginWithGoogle triggered');
+  if (isLoginPending) {
+    console.log('Login already pending, skipping');
+    return;
+  }
   isLoginPending = true;
   try {
-    const result = await signInWithPopup(auth, googleProvider);
+    // Get a fresh auth instance and provider to avoid potential stale references
+    const authInstance = getAuth(app);
+    const provider = new GoogleAuthProvider();
+    
+    console.log('Auth instance:', authInstance);
+    console.log('GoogleProvider instance:', provider);
+    
+    if (!authInstance || !provider) {
+      throw new Error('Auth or GoogleProvider is not initialized');
+    }
+
+    console.log('Attempting signInWithPopup...');
+    const result = await signInWithPopup(authInstance, provider);
+    console.log('Login successful:', result.user.email);
     return result.user;
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('Login error details:', error);
+    if (error instanceof Error) {
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+    }
+    // If it's a popup blocked error, we might want to alert the user
+    if (error instanceof Error && (error as any).code === 'auth/popup-blocked') {
+      alert('Popup blocked! Please allow popups for this site to login.');
+    }
     throw error;
   } finally {
     isLoginPending = false;
