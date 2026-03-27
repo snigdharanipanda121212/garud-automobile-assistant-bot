@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User, signInWithEmailAndPassword, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, query, where, orderBy, limit, getDocFromServer, Timestamp } from 'firebase/firestore';
 
 // Import the Firebase configuration
@@ -126,4 +126,4 @@ export const logout = async () => {
   }
 };
 
-export { Timestamp };
+export { Timestamp, signInWithEmailAndPassword, signInAnonymously };

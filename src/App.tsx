@@ -48,10 +48,19 @@ import {
 } from 'lucide-react';
 import { GoogleGenAI, Modality, LiveServerMessage, Type } from "@google/genai";
 import { COMMERCIAL_SCRIPT, Scene, Vehicle, INITIAL_VEHICLES, OWNER_MESSAGE } from './constants';
-import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError, testConnection } from './firebase';
+import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError, testConnection, signInAnonymously } from './firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { collection, onSnapshot, query, addDoc, deleteDoc, doc, setDoc, getDoc, serverTimestamp, Timestamp, orderBy, updateDoc, limit } from 'firebase/firestore';
+import { collection, onSnapshot, query, addDoc, deleteDoc, doc, setDoc, getDoc, getDocs, serverTimestamp, Timestamp, orderBy, updateDoc, limit } from 'firebase/firestore';
 import { translations, Language } from './translations';
+
+declare global {
+  interface Window {
+    aistudio: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}
 
 // --- Quotation Form Component ---
 const QuotationForm = ({ vehicle, onClose, onOpenFinance }: { vehicle: Vehicle, onClose: () => void, onOpenFinance: () => void }) => {
@@ -632,39 +641,74 @@ const OwnerDashboard = ({ user, userRole, loginWithGoogle }: { user: any, userRo
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest');
   const [searchTerm, setSearchTerm] = useState('');
 
-  const isAdmin = userRole === 'admin' && user?.email === 'sarita.riusriu121212@gmail.com';
+  const isAdmin = userRole === 'admin';
 
   useEffect(() => {
     if (!isAdmin) return;
 
-    const qQ = query(collection(db, 'quotations'), orderBy('createdAt', sortBy === 'newest' ? 'desc' : 'asc'));
-    const unsubscribeQ = onSnapshot(qQ, (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
-      setQuotations(list);
-    }, (error) => {
-      // Don't throw if it's a permission error and we already know they aren't admin
-      if (error.code === 'permission-denied') {
-        console.warn("Permission denied for quotations. User might not be fully authenticated as admin.");
-      } else {
-        handleFirestoreError(error, OperationType.LIST, 'quotations');
-      }
-    });
+    let unsubscribeQ: () => void = () => {};
+    let unsubscribeT: () => void = () => {};
 
-    const qT = query(collection(db, 'test_drives'), orderBy('createdAt', sortBy === 'newest' ? 'desc' : 'asc'));
-    const unsubscribeT = onSnapshot(qT, (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
-      setTestDrives(list);
-    }, (error) => {
-      if (error.code === 'permission-denied') {
-        console.warn("Permission denied for test_drives. User might not be fully authenticated as admin.");
-      } else {
-        handleFirestoreError(error, OperationType.LIST, 'test_drives');
-      }
-    });
+    const fetchAdminData = async () => {
+      try {
+        // Try backend API first for owner login (no auth needed)
+        const [qRes, tRes] = await Promise.all([
+          fetch('/api/owner/data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: '2122011', collection: 'quotations' })
+          }),
+          fetch('/api/owner/data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: '2122011', collection: 'test_drives' })
+          })
+        ]);
 
+        if (qRes.ok && tRes.ok) {
+          const qData = await qRes.json();
+          const tData = await tRes.json();
+          setQuotations(qData);
+          setTestDrives(tData);
+          return;
+        }
+      } catch (error) {
+        console.warn("Backend API fetch failed, falling back to Firestore SDK:", error);
+      }
+
+      // Fallback to Firestore SDK (requires auth)
+      const qQ = query(collection(db, 'quotations'), orderBy('createdAt', sortBy === 'newest' ? 'desc' : 'asc'));
+      unsubscribeQ = onSnapshot(qQ, (snapshot) => {
+        const list: any[] = [];
+        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+        setQuotations(list);
+      }, (error) => {
+        if (error.code === 'permission-denied') {
+          console.warn("Permission denied for quotations. User might not be fully authenticated as admin.");
+        } else {
+          handleFirestoreError(error, OperationType.LIST, 'quotations');
+        }
+      });
+
+      const qT = query(collection(db, 'test_drives'), orderBy('createdAt', sortBy === 'newest' ? 'desc' : 'asc'));
+      unsubscribeT = onSnapshot(qT, (snapshot) => {
+        const list: any[] = [];
+        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+        setTestDrives(list);
+      }, (error) => {
+        if (error.code === 'permission-denied') {
+          console.warn("Permission denied for test_drives. User might not be fully authenticated as admin.");
+        } else {
+          handleFirestoreError(error, OperationType.LIST, 'test_drives');
+        }
+      });
+    };
+
+    fetchAdminData();
+    const interval = setInterval(fetchAdminData, 30000); // Refresh every 30s
+    
     return () => {
+      clearInterval(interval);
       unsubscribeQ();
       unsubscribeT();
     };
@@ -852,6 +896,34 @@ const OwnerDashboard = ({ user, userRole, loginWithGoogle }: { user: any, userRo
                         <button
                           onClick={async () => {
                             try {
+                              // Try backend API first
+                              const res = await fetch(`/api/owner/update/${activeView}/${item.id}`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ password: '2122011', data: { status: 'completed' } })
+                              });
+                              
+                              if (res.ok) {
+                                // Refresh data
+                                const qRes = await fetch('/api/owner/data', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ password: '2122011', collection: 'quotations' })
+                                });
+                                const tRes = await fetch('/api/owner/data', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ password: '2122011', collection: 'test_drives' })
+                                });
+                                if (qRes.ok) setQuotations(await qRes.json());
+                                if (tRes.ok) setTestDrives(await tRes.json());
+                                return;
+                              }
+                            } catch (error) {
+                              console.warn("Backend API update failed, falling back to Firestore SDK:", error);
+                            }
+
+                            try {
                               await updateDoc(doc(db, activeView, item.id), { status: 'completed' });
                             } catch (error) {
                               handleFirestoreError(error, OperationType.UPDATE, `${activeView}/${item.id}`);
@@ -969,6 +1041,24 @@ function ReviewPage({ isOwner }: { isOwner: boolean }) {
 
   const handleDeleteReview = async (id: string) => {
     if (!isOwner) return;
+    try {
+      // Try backend API first
+      const res = await fetch(`/api/owner/data/reviews/${id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: '2122011' })
+      });
+
+      if (res.ok) {
+        // Refresh reviews
+        const snapshot = await getDocs(query(collection(db, 'reviews'), orderBy('createdAt', 'desc')));
+        setReviews(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        return;
+      }
+    } catch (error) {
+      console.warn("Backend API delete failed, falling back to Firestore SDK:", error);
+    }
+
     try {
       await deleteDoc(doc(db, 'reviews', id));
     } catch (error) {
@@ -1241,7 +1331,13 @@ function AppContent() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [aiInput, setAiInput] = useState('');
+  const [selectedVoice, setSelectedVoice] = useState<'Zephyr' | 'Puck' | 'Charon' | 'Kore' | 'Fenrir'>('Zephyr');
+  const [audioLevel, setAudioLevel] = useState(0);
+  const visualizerCanvasRef = useRef<HTMLCanvasElement>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
   const [isOwner, setIsOwner] = useState(false);
+  const [hasApiKey, setHasApiKey] = useState(true);
   const [transcription, setTranscription] = useState<string[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>(INITIAL_VEHICLES);
   const [selectedVehicleForQuotation, setSelectedVehicleForQuotation] = useState<Vehicle | null>(null);
@@ -1252,10 +1348,19 @@ function AppContent() {
 
   const [ownerPassword, setOwnerPassword] = useState('');
   const [passwordError, setPasswordError] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // Auth & Role Sync
   useEffect(() => {
     testConnection();
+    
+    const checkKey = async () => {
+      if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
+        const has = await window.aistudio.hasSelectedApiKey();
+        setHasApiKey(has);
+      }
+    };
+    checkKey();
     
     // Load saved owner status
     const savedOwner = localStorage.getItem('garud_is_owner');
@@ -1285,6 +1390,8 @@ function AppContent() {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       try {
         setUser(firebaseUser);
+        const savedIsOwner = localStorage.getItem('garud_is_owner') === 'true';
+        
         if (firebaseUser) {
           // Sync user to Firestore and get role
           const userDocRef = doc(db, 'users', firebaseUser.uid);
@@ -1295,8 +1402,13 @@ function AppContent() {
           
           if (userDoc.exists()) {
             const role = isOwnerEmail ? 'admin' : userDoc.data().role;
-            // Only override if not already set by password
-            if (!isOwner) {
+            // Respect saved owner status
+            if (savedIsOwner) {
+              setUserRole('admin');
+              setIsOwner(true);
+              setShowLangSelector(false);
+              if (!lang) setLang('en');
+            } else {
               setUserRole(role);
               setIsOwner(role === 'admin');
               if (role === 'admin') {
@@ -1314,7 +1426,13 @@ function AppContent() {
               photoURL: firebaseUser.photoURL || ''
             };
             await setDoc(userDocRef, newUser);
-            if (!isOwner) {
+            
+            if (savedIsOwner) {
+              setUserRole('admin');
+              setIsOwner(true);
+              setShowLangSelector(false);
+              if (!lang) setLang('en');
+            } else {
               setUserRole(role);
               setIsOwner(role === 'admin');
               if (role === 'admin') {
@@ -1323,6 +1441,12 @@ function AppContent() {
               }
             }
           }
+        } else if (savedIsOwner) {
+          // If no firebase user but we have saved owner status, keep it
+          setUserRole('admin');
+          setIsOwner(true);
+          setShowLangSelector(false);
+          if (!lang) setLang('en');
         }
       } catch (error) {
         console.error("Auth state sync error:", error);
@@ -1333,16 +1457,23 @@ function AppContent() {
     return () => unsubscribe();
   }, [isOwner]);
 
-  const handleOwnerLogin = () => {
+  const handleOwnerLogin = async () => {
     if (ownerPassword === '2122011') {
-      setIsOwner(true);
-      setUserRole('admin');
-      setShowLangSelector(false);
-      if (!lang) setLang('en');
-      localStorage.setItem('garud_is_owner', 'true');
-      setPasswordError(false);
-      // Inform the user they need to log in with Google for full dashboard access
-      console.log("Owner password correct. Please log in with Google (sarita.riusriu121212@gmail.com) for dashboard access.");
+      try {
+        setAuthError(null);
+        // We no longer need Anonymous Auth as we use the backend API
+        setIsOwner(true);
+        setUserRole('admin');
+        setShowLangSelector(false);
+        if (!lang) setLang('en');
+        localStorage.setItem('garud_is_owner', 'true');
+        setPasswordError(false);
+        console.log("Owner password correct. Dashboard access granted via backend API.");
+      } catch (error: any) {
+        console.error("Owner login error:", error);
+        setAuthError(error.message || "Authentication failed.");
+        setPasswordError(true);
+      }
     } else {
       setPasswordError(true);
       setTimeout(() => setPasswordError(false), 3000);
@@ -1444,6 +1575,42 @@ function AppContent() {
     return window.btoa(binary);
   };
 
+  const drawVisualizer = () => {
+    if (!analyserRef.current || !visualizerCanvasRef.current) return;
+    
+    const canvas = visualizerCanvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    const bufferLength = analyserRef.current.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    
+    const draw = () => {
+      animationFrameRef.current = requestAnimationFrame(draw);
+      analyserRef.current!.getByteFrequencyData(dataArray);
+      
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      const barWidth = (canvas.width / bufferLength) * 2.5;
+      let barHeight;
+      let x = 0;
+      
+      let sum = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        barHeight = dataArray[i] / 2;
+        sum += dataArray[i];
+        
+        ctx.fillStyle = `rgba(0, 102, 255, ${barHeight / 100})`;
+        ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+        
+        x += barWidth + 1;
+      }
+      setAudioLevel(sum / bufferLength);
+    };
+    
+    draw();
+  };
+
   const startLiveSession = async () => {
     if (sessionRef.current) return sessionRef.current;
     if (isConnecting) {
@@ -1456,7 +1623,7 @@ function AppContent() {
     
     try {
       setIsConnecting(true);
-      const apiKey = process.env.GEMINI_API_KEY;
+      const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
       if (!apiKey) {
         setTranscription(prev => [...prev, "Error: GEMINI_API_KEY is not configured."]);
         setIsConnecting(false);
@@ -1477,6 +1644,13 @@ function AppContent() {
       streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
       
       const source = audioContextRef.current.createMediaStreamSource(streamRef.current);
+      
+      // Setup Analyser for visualizer
+      analyserRef.current = audioContextRef.current.createAnalyser();
+      analyserRef.current.fftSize = 256;
+      source.connect(analyserRef.current);
+      drawVisualizer();
+
       processorRef.current = audioContextRef.current.createScriptProcessor(2048, 1, 1);
 
       const gainNode = audioContextRef.current.createGain();
@@ -1609,10 +1783,15 @@ function AppContent() {
             sessionRef.current = null;
             audioQueueRef.current = [];
             isPlayingRef.current = false;
+            if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
           },
           onerror: (e) => {
             console.error("Live API Error:", e);
-            setTranscription(prev => [...prev, "Error: Connection failed."]);
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            if (errorMsg.includes("permission") || errorMsg.includes("not found")) {
+              setHasApiKey(false);
+            }
+            setTranscription(prev => [...prev, `Error: ${errorMsg}`]);
             setIsConnecting(false);
             stopLiveSession();
           },
@@ -1620,7 +1799,7 @@ function AppContent() {
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: selectedVoice } },
           },
           tools: [
             { googleSearch: {} },
@@ -1642,7 +1821,7 @@ function AppContent() {
               }]
             }
           ],
-          systemInstruction: "You are an expert on Garud Automobiles. You MUST respond primarily in Berhampur Odiya (Ganjami dialect) to make the local customers feel at home, but you can use English if the customer prefers. You are helpful, persuasive, and professional. ONLY answer questions about Garud vehicles (L-5, L-3 models), their 200km range, 3-year battery warranty, and exchange offers. Use Google Search for up-to-date EV trends. Use the compareVehicles tool for side-by-side specs. Your goal is to convince customers to buy Garud vehicles for their business. Be warm and welcoming in Odiya.",
+          systemInstruction: "You are an expert on Garud Automobiles. You MUST respond primarily in Berhampur Odiya (Ganjami dialect) to make the local customers feel at home, but you can use English if the customer prefers. You are helpful, persuasive, and professional. ONLY answer questions about Garud vehicles (L-5, L-3 models), their 200km range, 3-year battery warranty, and exchange offers. Use Google Search for up-to-date EV trends. Use the compareVehicles tool for side-by-side specs. Your goal is to convince customers to buy Garud vehicles for their business. Be warm and welcoming in Odiya. Keep your responses concise for voice interaction.",
           outputAudioTranscription: {},
           inputAudioTranscription: {},
         },
@@ -1819,7 +1998,17 @@ function AppContent() {
                 </button>
               </div>
               {passwordError && (
-                <p className="text-red-500 text-[10px] uppercase font-bold text-center animate-pulse">Invalid Password</p>
+                <p className="text-red-500 text-[10px] uppercase font-bold text-center animate-pulse">
+                  {authError || "Invalid Password"}
+                </p>
+              )}
+              {authError && (
+                <div className="mt-2 p-2 bg-red-500/10 border border-red-500/20 rounded text-[9px] text-red-400 text-center">
+                  <p className="font-bold mb-1">FIX REQUIRED:</p>
+                  <p>1. Go to Firebase Console</p>
+                  <p>2. Authentication &gt; Sign-in method</p>
+                  <p>3. Enable "Anonymous" provider</p>
+                </div>
               )}
               {isOwner && !user && (
                 <button
@@ -1926,7 +2115,8 @@ function AppContent() {
             )}
             {isOwner && (
               <button
-                onClick={() => {
+                onClick={async () => {
+                  await logout();
                   setIsOwner(false);
                   setUserRole('viewer');
                   localStorage.removeItem('garud_is_owner');
@@ -1950,7 +2140,14 @@ function AppContent() {
               </div>
               <img src={user.photoURL || ''} alt={user.displayName || ''} className="w-8 h-8 rounded-full border border-white/10" />
               <button 
-                onClick={logout}
+                onClick={async () => {
+                  await logout();
+                  setIsOwner(false);
+                  setUserRole('viewer');
+                  localStorage.removeItem('garud_is_owner');
+                  setShowLangSelector(true);
+                  setActiveTab('script');
+                }}
                 className="text-[10px] font-bold text-white/40 hover:text-white transition-colors"
               >
                 LOGOUT
@@ -2073,8 +2270,62 @@ function AppContent() {
                       <Zap size={18} />
                       GARUD AI ASSISTANT
                     </h3>
-                    <div className={`w-2 h-2 rounded-full ${isConnecting ? 'bg-lemon-yellow animate-ping' : isRecording ? 'bg-red-500 animate-pulse' : 'bg-white/20'}`} />
+                    <div className="flex items-center gap-3">
+                      <select 
+                        value={selectedVoice}
+                        onChange={(e) => setSelectedVoice(e.target.value as any)}
+                        className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-[10px] uppercase font-bold outline-none focus:border-electric-blue text-white"
+                        disabled={isRecording || isConnecting}
+                      >
+                        <option value="Zephyr" className="bg-black">Zephyr (Male)</option>
+                        <option value="Puck" className="bg-black">Puck (Male)</option>
+                        <option value="Charon" className="bg-black">Charon (Male)</option>
+                        <option value="Kore" className="bg-black">Kore (Female)</option>
+                        <option value="Fenrir" className="bg-black">Fenrir (Male)</option>
+                      </select>
+                      <div className={`w-2 h-2 rounded-full ${isConnecting ? 'bg-lemon-yellow animate-ping' : isRecording ? 'bg-red-500 animate-pulse' : 'bg-white/20'}`} />
+                    </div>
                   </div>
+                  
+                  {!hasApiKey && (
+                    <div className="mb-6 p-4 bg-lemon-yellow/10 border border-lemon-yellow/30 rounded-xl space-y-3 animate-in fade-in zoom-in duration-300">
+                      <div className="flex items-center gap-2">
+                        <Lock size={14} className="text-lemon-yellow" />
+                        <p className="text-[10px] font-bold text-lemon-yellow uppercase tracking-widest">Billing Required</p>
+                      </div>
+                      <p className="text-[10px] text-white/60 leading-relaxed">
+                        To use the advanced Gemini 3.1 Live Voice features, you must select an API key from a paid Google Cloud project.
+                      </p>
+                      <button 
+                        onClick={async () => {
+                          if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
+                            await window.aistudio.openSelectKey();
+                            setHasApiKey(true);
+                          }
+                        }}
+                        className="w-full bg-lemon-yellow text-black text-[10px] font-black py-2 rounded-lg hover:bg-lemon-yellow/80 transition-all shadow-[0_0_20px_rgba(255,255,0,0.2)]"
+                      >
+                        SET API KEY
+                      </button>
+                      <div className="flex justify-center">
+                        <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-[8px] text-white/20 underline hover:text-white/40 transition-colors">Billing Documentation</a>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {isRecording && (
+                    <div className="mb-4 h-8 bg-white/5 rounded-xl overflow-hidden relative border border-white/10">
+                      <canvas 
+                        ref={visualizerCanvasRef} 
+                        width={400} 
+                        height={32} 
+                        className="w-full h-full"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <div className="w-full h-[1px] bg-electric-blue/20" />
+                      </div>
+                    </div>
+                  )}
                   
                   <div className="flex-1 space-y-4 overflow-y-auto mb-6 max-h-[400px] scrollbar-hide">
                     {isConnecting && transcription.length === 0 ? (
