@@ -8,8 +8,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   ChevronRight, 
   ChevronLeft, 
-  Mic, 
-  MicOff, 
   Info, 
   Truck, 
   Battery, 
@@ -46,7 +44,6 @@ import {
   Send,
   Camera
 } from 'lucide-react';
-import { GoogleGenAI, Modality, LiveServerMessage, Type } from "@google/genai";
 import { COMMERCIAL_SCRIPT, Scene, Vehicle, INITIAL_VEHICLES, OWNER_MESSAGE } from './constants';
 import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError, testConnection, signInAnonymously } from './firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
@@ -422,6 +419,10 @@ const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onIm
 
   const addVehicle = async () => {
     if (!newVehicle.name || !newVehicle.price) return;
+    if (!auth.currentUser) {
+      console.error("User not authenticated. Cannot add vehicle.");
+      return;
+    }
     try {
       const vehicleData = {
         ...newVehicle,
@@ -442,6 +443,10 @@ const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onIm
   };
 
   const removeVehicle = async (id: string) => {
+    if (!auth.currentUser) {
+      console.error("User not authenticated. Cannot delete vehicle.");
+      return;
+    }
     try {
       await deleteDoc(doc(db, 'vehicles', id));
     } catch (error) {
@@ -1326,18 +1331,8 @@ function AppContent() {
   const [customerPhone, setCustomerPhone] = useState('');
   const t = translations[lang || 'en'];
   const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
-  const [isLiveMode, setIsLiveMode] = useState(false);
   const [comparisonVehicles, setComparisonVehicles] = useState<Vehicle[]>([]);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [aiInput, setAiInput] = useState('');
-  const [selectedVoice, setSelectedVoice] = useState<'Zephyr' | 'Puck' | 'Charon' | 'Kore' | 'Fenrir'>('Zephyr');
-  const [audioLevel, setAudioLevel] = useState(0);
-  const visualizerCanvasRef = useRef<HTMLCanvasElement>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
   const [isOwner, setIsOwner] = useState(false);
-  const [transcription, setTranscription] = useState<string[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>(INITIAL_VEHICLES);
   const [selectedVehicleForQuotation, setSelectedVehicleForQuotation] = useState<Vehicle | null>(null);
   const [selectedVehicleForTestDrive, setSelectedVehicleForTestDrive] = useState<Vehicle | null>(null);
@@ -1490,70 +1485,12 @@ function AppContent() {
 
   const currentScene = COMMERCIAL_SCRIPT[currentSceneIndex];
 
-  // Live API Refs
-  const chatSessionRef = useRef<any>(null);
-  const recognitionRef = useRef<any>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-
   const nextScene = () => {
     setCurrentSceneIndex((prev) => (prev + 1) % COMMERCIAL_SCRIPT.length);
   };
 
   const prevScene = () => {
     setCurrentSceneIndex((prev) => (prev - 1 + COMMERCIAL_SCRIPT.length) % COMMERCIAL_SCRIPT.length);
-  };
-
-  const audioQueueRef = useRef<Float32Array[]>([]);
-  const isPlayingRef = useRef(false);
-  const currentSourceRef = useRef<AudioBufferSourceNode | null>(null);
-
-  const stopPlayback = () => {
-    if (currentSourceRef.current) {
-      try {
-        currentSourceRef.current.stop();
-      } catch (e) {
-        // Ignore if already stopped
-      }
-      currentSourceRef.current = null;
-    }
-    audioQueueRef.current = [];
-    isPlayingRef.current = false;
-  };
-
-  const playNextInQueue = async () => {
-    if (!audioContextRef.current || audioQueueRef.current.length === 0 || isPlayingRef.current) return;
-
-    if (audioContextRef.current.state === 'suspended') {
-      await audioContextRef.current.resume();
-    }
-
-    isPlayingRef.current = true;
-    const floatData = audioQueueRef.current.shift()!;
-    
-    try {
-      const audioBuffer = audioContextRef.current.createBuffer(1, floatData.length, 24000);
-      audioBuffer.getChannelData(0).set(floatData);
-
-      const playSource = audioContextRef.current.createBufferSource();
-      playSource.buffer = audioBuffer;
-      playSource.connect(audioContextRef.current.destination);
-      currentSourceRef.current = playSource;
-      
-      playSource.onended = () => {
-        if (currentSourceRef.current === playSource) {
-          currentSourceRef.current = null;
-        }
-        isPlayingRef.current = false;
-        playNextInQueue();
-      };
-      
-      playSource.start();
-    } catch (err) {
-      console.error("Playback error:", err);
-      isPlayingRef.current = false;
-      playNextInQueue();
-    }
   };
 
   const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
@@ -1564,225 +1501,6 @@ function AppContent() {
       binary += String.fromCharCode(bytes[i]);
     }
     return window.btoa(binary);
-  };
-
-  const drawVisualizer = () => {
-    if (!analyserRef.current || !visualizerCanvasRef.current) return;
-    
-    const canvas = visualizerCanvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    const bufferLength = analyserRef.current.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-    
-    const draw = () => {
-      animationFrameRef.current = requestAnimationFrame(draw);
-      analyserRef.current!.getByteFrequencyData(dataArray);
-      
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
-      const barWidth = (canvas.width / bufferLength) * 2.5;
-      let barHeight;
-      let x = 0;
-      
-      let sum = 0;
-      for (let i = 0; i < bufferLength; i++) {
-        barHeight = dataArray[i] / 2;
-        sum += dataArray[i];
-        
-        ctx.fillStyle = `rgba(0, 102, 255, ${barHeight / 100})`;
-        ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
-        
-        x += barWidth + 1;
-      }
-      setAudioLevel(sum / bufferLength);
-    };
-    
-    draw();
-  };
-
-  const [chatSession, setChatSession] = useState<any>(null);
-
-  const getChatSession = async () => {
-    if (chatSession) return chatSession;
-    
-    try {
-      setIsConnecting(true);
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        setTranscription(prev => [...prev, "Error: GEMINI_API_KEY is not configured."]);
-        setIsConnecting(false);
-        return null;
-      }
-
-      const ai = new GoogleGenAI({ apiKey });
-      const chat = ai.chats.create({
-        model: "gemini-3-flash-preview",
-        config: {
-          systemInstruction: "You are an expert on Garud Automobiles. You MUST respond primarily in Berhampur Odiya (Ganjami dialect) to make the local customers feel at home, but you can use English if the customer prefers. You are helpful, persuasive, and professional. ONLY answer questions about Garud vehicles (L-5, L-3 models), their 200km range, 3-year battery warranty, and exchange offers. Use Google Search for up-to-date EV trends. Your goal is to convince customers to buy Garud vehicles for their business. Be warm and welcoming in Odiya. Keep your responses concise.",
-          tools: [{ googleSearch: {} }],
-        },
-      });
-
-      setChatSession(chat);
-      setIsConnecting(false);
-      return chat;
-    } catch (err) {
-      console.error("Failed to start chat session:", err);
-      setIsConnecting(false);
-      return null;
-    }
-  };
-
-  const speakResponse = async (text: string) => {
-    try {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return;
-      
-      const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: selectedVoice },
-            },
-          },
-        },
-      });
-
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (base64Audio) {
-        const binaryString = atob(base64Audio);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        
-        if (!audioContextRef.current) {
-          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-        }
-        
-        const pcmData = new Int16Array(bytes.buffer);
-        const floatData = new Float32Array(pcmData.length);
-        for (let i = 0; i < pcmData.length; i++) {
-          floatData[i] = pcmData[i] / 32768.0;
-        }
-        
-        const audioBuffer = audioContextRef.current.createBuffer(1, floatData.length, 24000);
-        audioBuffer.getChannelData(0).set(floatData);
-        
-        const source = audioContextRef.current.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioContextRef.current.destination);
-        source.start();
-      }
-    } catch (err) {
-      console.error("TTS error:", err);
-    }
-  };
-
-  const handleSendText = async () => {
-    if (!aiInput.trim()) return;
-    const text = aiInput;
-    setAiInput('');
-    setTranscription(prev => [...prev.slice(-10), `You: ${text}`]);
-    
-    try {
-      setIsConnecting(true);
-      const chat = await getChatSession();
-      if (!chat) return;
-
-      const response = await chat.sendMessage({ message: text });
-      const aiText = response.text;
-      
-      setTranscription(prev => [...prev.slice(-10), `AI: ${aiText}`]);
-      speakResponse(aiText);
-    } catch (err) {
-      console.error("Chat error:", err);
-      setTranscription(prev => [...prev, "Error: Failed to get response."]);
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
-  const handleImageInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      setIsConnecting(true);
-      const chat = await getChatSession();
-      if (!chat) return;
-
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64Data = (reader.result as string).split(',')[1];
-        setTranscription(prev => [...prev.slice(-10), "You: [Sent an image]"]);
-        
-        const response = await chat.sendMessage({
-          message: [
-            { text: "Analyze this image and tell me how it relates to Garud Automobiles. If it's a vehicle, identify if it's L-5 or L-3 and highlight its features." },
-            { inlineData: { data: base64Data, mimeType: file.type } }
-          ]
-        });
-        
-        const aiText = response.text;
-        setTranscription(prev => [...prev.slice(-10), `AI: ${aiText}`]);
-        speakResponse(aiText);
-      };
-      reader.readAsDataURL(file);
-    } catch (err) {
-      console.error("Image analysis error:", err);
-      setTranscription(prev => [...prev, "Error: Failed to analyze image."]);
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
-  const toggleRecording = () => {
-    if (isRecording) {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-      setIsRecording(false);
-      return;
-    }
-
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setTranscription(prev => [...prev, "Error: Speech recognition not supported in this browser."]);
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = lang === 'or' ? 'or-IN' : lang === 'te' ? 'te-IN' : 'en-IN';
-    recognition.continuous = false;
-    recognition.interimResults = false;
-
-    recognition.onstart = () => {
-      setIsRecording(true);
-    };
-
-    recognition.onresult = (event: any) => {
-      const text = event.results[0][0].transcript;
-      setAiInput(text);
-    };
-
-    recognition.onerror = (event: any) => {
-      console.error("Speech recognition error:", event.error);
-      setIsRecording(false);
-    };
-
-    recognition.onend = () => {
-      setIsRecording(false);
-    };
-
-    recognitionRef.current = recognition;
-    recognition.start();
   };
 
   if (loading) {
@@ -2059,19 +1777,6 @@ function AppContent() {
               <User size={18} />
             </button>
           )}
-
-          <button 
-            onClick={() => {
-              setIsLiveMode(!isLiveMode);
-              if (!isLiveMode) setActiveTab('script');
-            }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold transition-all ${
-              isLiveMode ? 'bg-lemon-yellow text-black' : 'bg-white/10 hover:bg-white/20'
-            }`}
-          >
-            <MessageSquare size={14} />
-            {isLiveMode ? 'EXIT LIVE CHAT' : 'AI VOICE GUIDE'}
-          </button>
         </div>
       </header>
 
@@ -2156,109 +1861,8 @@ function AppContent() {
 
             {/* Right Column: Info & AI */}
             <div className="lg:col-span-4 space-y-6">
-              {isLiveMode ? (
-                <div className="glass-panel rounded-2xl border border-lemon-yellow/30 p-6 h-full flex flex-col min-h-[500px]">
-                  <div className="flex items-center justify-between mb-6">
-                    <h3 className="font-bold text-lemon-yellow flex items-center gap-2">
-                      <Zap size={18} />
-                      GARUD AI ASSISTANT
-                    </h3>
-                    <div className="flex items-center gap-3">
-                      <select 
-                        value={selectedVoice}
-                        onChange={(e) => setSelectedVoice(e.target.value as any)}
-                        className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-[10px] uppercase font-bold outline-none focus:border-electric-blue text-white"
-                        disabled={isRecording || isConnecting}
-                      >
-                        <option value="Zephyr" className="bg-black">Zephyr (Male)</option>
-                        <option value="Puck" className="bg-black">Puck (Male)</option>
-                        <option value="Charon" className="bg-black">Charon (Male)</option>
-                        <option value="Kore" className="bg-black">Kore (Female)</option>
-                        <option value="Fenrir" className="bg-black">Fenrir (Male)</option>
-                      </select>
-                      <div className={`w-2 h-2 rounded-full ${isConnecting ? 'bg-lemon-yellow animate-ping' : isRecording ? 'bg-red-500 animate-pulse' : 'bg-white/20'}`} />
-                    </div>
-                  </div>
-                  
-                  {isRecording && (
-                    <div className="mb-4 h-8 bg-white/5 rounded-xl overflow-hidden relative border border-white/10">
-                      <canvas 
-                        ref={visualizerCanvasRef} 
-                        width={400} 
-                        height={32} 
-                        className="w-full h-full"
-                      />
-                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <div className="w-full h-[1px] bg-electric-blue/20" />
-                      </div>
-                    </div>
-                  )}
-                  
-                  <div className="flex-1 space-y-4 overflow-y-auto mb-6 max-h-[400px] scrollbar-hide">
-                    {isConnecting && transcription.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-full text-center space-y-4 opacity-50">
-                        <Zap size={48} className="text-lemon-yellow animate-bounce" />
-                        <p className="text-sm font-bold tracking-widest uppercase">Connecting to Garud AI...</p>
-                      </div>
-                    ) : transcription.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-full text-center space-y-4 opacity-30">
-                        <Zap size={48} className="text-lemon-yellow" />
-                        <p className="text-sm italic">Ask me anything about Garud Vehicles...</p>
-                      </div>
-                    ) : (
-                      transcription.map((t, i) => (
-                        <div key={i} className={`p-3 rounded-xl text-sm ${t.startsWith('AI:') ? 'bg-electric-blue/20 border border-electric-blue/30 self-start' : 'bg-white/5 self-end ml-8'}`}>
-                          {t}
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="relative flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl p-2 focus-within:border-electric-blue transition-all">
-                      <Search size={18} className="ml-2 text-white/20" />
-                      <input 
-                        type="file" 
-                        id="ai-camera" 
-                        className="hidden" 
-                        accept="image/*"
-                        onChange={handleImageInput}
-                      />
-                      <label htmlFor="ai-camera" className="p-2 hover:bg-white/10 rounded-xl cursor-pointer text-white/40 hover:text-white transition-all">
-                        <Camera size={20} />
-                      </label>
-                      <input 
-                        type="text"
-                        placeholder="Ask about vehicles..."
-                        className="flex-1 bg-transparent border-none outline-none text-sm py-2"
-                        value={aiInput}
-                        onChange={(e) => setAiInput(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSendText()}
-                      />
-                      <button 
-                        onClick={toggleRecording}
-                        disabled={isConnecting}
-                        className={`p-2 rounded-xl transition-all ${isRecording ? 'text-red-500 bg-red-500/10' : isConnecting ? 'text-lemon-yellow bg-lemon-yellow/10 opacity-50' : 'text-white/40 hover:text-white'}`}
-                      >
-                        {isRecording ? <MicOff size={20} /> : <Mic size={20} />}
-                      </button>
-                      <button 
-                        onClick={handleSendText}
-                        className="p-2 bg-electric-blue text-white rounded-xl hover:bg-electric-blue/80 transition-all"
-                      >
-                        <Send size={18} />
-                      </button>
-                    </div>
-                    {isRecording && (
-                      <p className="text-[10px] text-center text-red-500 font-bold uppercase tracking-widest animate-pulse">
-                        Live Voice Active - I am listening...
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  <div className="glass-panel p-6 rounded-2xl border border-lemon-yellow/20 bg-lemon-yellow/5 relative overflow-hidden">
+              <div className="space-y-6">
+                <div className="glass-panel p-6 rounded-2xl border border-lemon-yellow/20 bg-lemon-yellow/5 relative overflow-hidden">
                     <div className="absolute top-0 right-0 p-2 opacity-10">
                       <MessageSquare size={40} />
                     </div>
@@ -2324,9 +1928,8 @@ function AppContent() {
                     </div>
                   </div>
                 </div>
-              )}
+              </div>
             </div>
-          </div>
         ) : activeTab === 'vehicles' ? (
           <VehicleManagement 
             vehicles={vehicles} 

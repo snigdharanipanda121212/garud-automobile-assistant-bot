@@ -39,9 +39,11 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        (
           (request.auth.token.email == "sarita.riusriu121212@gmail.com" && request.auth.token.email_verified == true) ||
-          request.auth.token.is_owner == true);
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+          request.auth.token.is_owner == true
+        );
     }
 
     function hasRequiredFields(fields) {
