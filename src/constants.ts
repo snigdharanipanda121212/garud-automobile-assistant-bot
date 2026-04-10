@@ -12,8 +12,8 @@ export interface Scene {
 export interface Vehicle {
   id: string;
   name: string;
-  model: 'L-3' | 'L-5';
-  category: 'Passenger' | 'Cargo' | 'Tipper' | 'Loader';
+  model: string;
+  category: string;
   range: string;
   batteryWarranty: string;
   vehicleWarranty: string;

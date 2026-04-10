@@ -7,7 +7,46 @@ import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase SDK
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+// Initialize Firestore with fallback
+let dbInstance;
+const dbId = (firebaseConfig as any).firestoreDatabaseId || '(default)';
+console.log(`Initializing Firestore with database ID: ${dbId}`);
+dbInstance = getFirestore(app, dbId);
+
+export let db = dbInstance;
+
+// Function to switch to fallback database if needed
+export async function ensureConnection() {
+  try {
+    // Try a simple read to verify the database exists and is accessible
+    await getDocFromServer(doc(db, 'vehicles', 'test-connection'));
+    console.log(`Firestore connection to ${dbId} verified.`);
+  } catch (error: any) {
+    console.warn(`Firestore connection test failed for ${dbId}:`, error.message);
+    
+    // If NOT_FOUND or similar error, fallback to (default)
+    if (dbId !== '(default)' && (
+      error.message?.includes('NOT_FOUND') || 
+      error.message?.includes('5') || 
+      error.message?.includes('permission-denied') ||
+      error.message?.includes('failed-precondition')
+    )) {
+      console.error(`Database ${dbId} might not exist or is inaccessible. Falling back to (default)...`);
+      try {
+        const fallbackDb = getFirestore(app, '(default)');
+        // Verify fallback
+        await getDocFromServer(doc(fallbackDb, 'vehicles', 'test-connection'));
+        db = fallbackDb;
+        console.log("Successfully switched to (default) database.");
+      } catch (fallbackError: any) {
+        console.error("Fallback to (default) also failed:", fallbackError.message);
+        // Last resort: use default instance
+        db = getFirestore(app);
+      }
+    }
+  }
+}
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 

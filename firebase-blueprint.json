@@ -34,13 +34,14 @@
         "name": { "type": "string" },
         "price": { "type": "string" },
         "model": { "type": "string" },
+        "category": { "type": "string", "enum": ["Passenger", "Cargo", "Tipper", "Loader"] },
         "range": { "type": "string" },
         "batteryWarranty": { "type": "string" },
         "vehicleWarranty": { "type": "string" },
         "imageUrl": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["name", "price", "model", "range", "batteryWarranty", "vehicleWarranty"]
+      "required": ["name", "price", "model", "category", "range", "batteryWarranty", "vehicleWarranty"]
     },
     "Quotation": {
       "title": "Quotation",

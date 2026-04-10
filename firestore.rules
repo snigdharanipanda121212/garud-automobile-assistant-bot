@@ -12,7 +12,7 @@ service cloud.firestore {
     // Fields: displayName (string), email (string), role (enum: admin, viewer), photoURL (string)
     //
     // Collection: vehicles
-    // Fields: name (string), price (string), model (string), range (string), batteryWarranty (string), vehicleWarranty (string), imageUrl (string), createdAt (timestamp)
+    // Fields: name (string), price (string), model (string), category (string), range (string), batteryWarranty (string), vehicleWarranty (string), imageUrl (string), createdAt (timestamp)
     //
     // Collection: quotations
     // Fields: name (string), phone (string), email (string), address (string), financeNeeded (bool), vehicleId (string), vehicleName (string), vehicleModel (string), vehiclePrice (string), status (enum: pending, completed), createdAt (timestamp)
@@ -73,19 +73,21 @@ service cloud.firestore {
     }
 
     function isValidUser(data) {
-      return hasRequiredFields(['displayName', 'email', 'role']) &&
-             hasOnlyAllowedFields(['displayName', 'email', 'role', 'photoURL']) &&
-             data.displayName is string && data.displayName.size() > 0 &&
-             isValidEmail(data.email) &&
-             data.role in ['admin', 'viewer'];
+      let allowed = ['displayName', 'email', 'role', 'photoURL', 'updatedAt', 'createdAt'];
+      return hasOnlyAllowedFields(allowed) &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() > 0)) &&
+             (!('email' in data) || (data.email == "" || isValidEmail(data.email))) &&
+             (!('role' in data) || (data.role in ['admin', 'viewer'])) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 2000));
     }
 
     function isValidVehicle(data) {
-      return hasRequiredFields(['name', 'price', 'model', 'range', 'batteryWarranty', 'vehicleWarranty']) &&
-             hasOnlyAllowedFields(['name', 'price', 'model', 'range', 'batteryWarranty', 'vehicleWarranty', 'imageUrl', 'createdAt']) &&
+      return hasRequiredFields(['name', 'price', 'model', 'category', 'range', 'batteryWarranty', 'vehicleWarranty']) &&
+             hasOnlyAllowedFields(['name', 'price', 'model', 'category', 'range', 'batteryWarranty', 'vehicleWarranty', 'imageUrl', 'createdAt']) &&
              data.name is string && data.name.size() > 0 &&
              data.price is string &&
              data.model is string &&
+             data.category is string &&
              data.range is string &&
              data.batteryWarranty is string &&
              data.vehicleWarranty is string;
@@ -136,13 +138,15 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
-      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) && request.resource.data.role == 'viewer' || isAdmin());
-      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) && request.resource.data.role == resource.data.role || isAdmin());
+      allow create: if isAuthenticated() && isOwner(userId) && hasRequiredFields(['displayName', 'email', 'role']) && isValidUser(request.resource.data);
+      allow update: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data);
     }
 
     match /vehicles/{vehicleId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create: if isAdmin() && isValidVehicle(request.resource.data);
+      allow update: if isAdmin() && isValidVehicle(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /quotations/{quotationId} {
@@ -161,7 +165,7 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isValidReview(request.resource.data);
       allow update: if false;
-      allow delete: if isAuthenticated();
+      allow delete: if isAdmin();
     }
   }
 }

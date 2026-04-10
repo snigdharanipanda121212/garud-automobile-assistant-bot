@@ -17,6 +17,7 @@ import {
   MessageSquare,
   Plus,
   Trash2,
+  Edit,
   Layout,
   Car,
   Image as ImageIcon,
@@ -42,10 +43,12 @@ import {
   LogIn,
   Lock,
   Send,
-  Camera
+  Camera,
+  RefreshCw,
+  Activity
 } from 'lucide-react';
 import { COMMERCIAL_SCRIPT, Scene, Vehicle, INITIAL_VEHICLES, OWNER_MESSAGE } from './constants';
-import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError, testConnection, signInAnonymously } from './firebase';
+import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError, testConnection, signInAnonymously, ensureConnection } from './firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { collection, onSnapshot, query, addDoc, deleteDoc, doc, setDoc, getDoc, getDocs, serverTimestamp, Timestamp, orderBy, updateDoc, limit } from 'firebase/firestore';
 import { translations, Language } from './translations';
@@ -60,8 +63,9 @@ declare global {
 }
 
 // --- Quotation Form Component ---
-const QuotationForm = ({ vehicle, onClose, onOpenFinance }: { vehicle: Vehicle, onClose: () => void, onOpenFinance: () => void }) => {
+const QuotationForm = ({ vehicle, vehicles, onClose, onOpenFinance }: { vehicle: Vehicle, vehicles: Vehicle[], onClose: () => void, onOpenFinance: () => void }) => {
   const { t } = useContext(LanguageContext);
+  const [selectedVehicle, setSelectedVehicle] = useState<Vehicle>(vehicle);
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
@@ -70,25 +74,37 @@ const QuotationForm = ({ vehicle, onClose, onOpenFinance }: { vehicle: Vehicle, 
     financeNeeded: false
   });
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoading(true);
+    setError(null);
+    console.log("Submitting quotation for vehicle:", selectedVehicle.id, formData);
     try {
       await addDoc(collection(db, 'quotations'), {
         ...formData,
-        vehicleId: vehicle.id,
-        vehicleName: vehicle.name,
-        vehicleModel: vehicle.model,
-        vehiclePrice: vehicle.price,
+        vehicleId: selectedVehicle.id,
+        vehicleName: selectedVehicle.name,
+        vehicleModel: selectedVehicle.model,
+        vehiclePrice: selectedVehicle.price,
         status: 'pending',
         createdAt: serverTimestamp()
       });
+      console.log("Quotation submitted successfully!");
       if (formData.financeNeeded) {
         onOpenFinance();
       }
       setSubmitted(true);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'quotations');
+    } catch (err: any) {
+      console.error("Quotation submission error:", err);
+      setError(t.errorSubmitting);
+      try {
+        handleFirestoreError(err, OperationType.WRITE, 'quotations');
+      } catch (e) {}
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -114,15 +130,41 @@ const QuotationForm = ({ vehicle, onClose, onOpenFinance }: { vehicle: Vehicle, 
         <FileText className="text-lemon-yellow" />
         {t.requestQuotation.toUpperCase()}
       </h2>
-      <div className="p-4 bg-white/5 rounded-xl border border-white/5 flex items-center gap-4">
-        <div className="w-12 h-12 rounded-lg overflow-hidden">
-          <img src={vehicle.imageUrl} alt={vehicle.name} className="w-full h-full object-cover" />
+      
+      <div className="space-y-4">
+        <div className="space-y-1">
+          <label className="text-[10px] uppercase tracking-widest text-white/40">SELECT VEHICLE</label>
+          <select 
+            className="w-full bg-white/5 border border-white/10 rounded-xl py-3 px-4 focus:border-electric-blue outline-none text-sm"
+            value={selectedVehicle.id}
+            onChange={(e) => {
+              const v = vehicles.find(v => v.id === e.target.value);
+              if (v) setSelectedVehicle(v);
+            }}
+          >
+            {vehicles.map(v => (
+              <option key={v.id} value={v.id} className="bg-black">{v.name} - {v.model}</option>
+            ))}
+          </select>
         </div>
-        <div>
-          <h4 className="font-bold">{vehicle.name}</h4>
-          <p className="text-xs text-white/40">{vehicle.model} • {vehicle.price}</p>
+
+        <div className="p-4 bg-white/5 rounded-xl border border-white/5 flex items-center gap-4">
+          <div className="w-12 h-12 rounded-lg overflow-hidden">
+            {selectedVehicle.imageUrl ? (
+              <img src={selectedVehicle.imageUrl} alt={selectedVehicle.name} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full bg-white/5 flex items-center justify-center">
+                <Car size={20} className="text-white/20" />
+              </div>
+            )}
+          </div>
+          <div>
+            <h4 className="font-bold">{selectedVehicle.name}</h4>
+            <p className="text-xs text-white/40">{selectedVehicle.model} • <span className="text-lemon-yellow font-bold">{selectedVehicle.price}</span></p>
+          </div>
         </div>
       </div>
+
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1">
@@ -187,8 +229,18 @@ const QuotationForm = ({ vehicle, onClose, onOpenFinance }: { vehicle: Vehicle, 
           />
           <label htmlFor="finance" className="text-sm font-bold cursor-pointer">{t.needFinance}</label>
         </div>
-        <button type="submit" className="w-full bg-lemon-yellow text-black font-black py-3 rounded-xl shadow-lg hover:scale-[1.02] transition-all">
-          {t.submitRequest.toUpperCase()}
+        {error && (
+          <div className="p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-500 text-xs font-bold text-center">
+            {error}
+          </div>
+        )}
+        <button 
+          type="submit" 
+          disabled={loading}
+          className="w-full bg-lemon-yellow text-black font-black py-3 rounded-xl shadow-lg hover:scale-[1.02] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        >
+          {loading && <Zap size={18} className="animate-spin" />}
+          {loading ? '...' : t.submitRequest.toUpperCase()}
         </button>
       </form>
     </div>
@@ -197,6 +249,7 @@ const QuotationForm = ({ vehicle, onClose, onOpenFinance }: { vehicle: Vehicle, 
 
 // --- Finance Sheet Component (Excel Style) ---
 const FinanceSheet = ({ onClose }: { onClose: () => void }) => {
+  const { t } = useContext(LanguageContext);
   const [rows, setRows] = useState([
     { id: 1, detail: 'Applicant Name', value: '' },
     { id: 2, detail: 'Monthly Income', value: '' },
@@ -245,7 +298,7 @@ const FinanceSheet = ({ onClose }: { onClose: () => void }) => {
                     className="w-full bg-transparent px-3 py-2 outline-none focus:bg-green-500/10 transition-colors"
                     value={row.value}
                     onChange={e => updateValue(row.id, e.target.value)}
-                    placeholder="Enter details..."
+                    placeholder={t.enterDetails}
                   />
                 </td>
               </tr>
@@ -259,10 +312,10 @@ const FinanceSheet = ({ onClose }: { onClose: () => void }) => {
           SAVE DRAFT
         </button>
         <button 
-          onClick={() => { alert("Finance details submitted to owner!"); onClose(); }}
+          onClick={() => { alert(t.financeSubmitted); onClose(); }}
           className="flex-1 bg-green-600 hover:bg-green-500 py-3 rounded-xl font-bold transition-all shadow-lg"
         >
-          SUBMIT TO OWNER
+          {t.submit.toUpperCase()}
         </button>
       </div>
     </div>
@@ -280,9 +333,14 @@ const TestDriveForm = ({ vehicle, onClose }: { vehicle: Vehicle, onClose: () => 
   });
 
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoading(true);
+    setError(null);
+    console.log("Submitting test drive request for vehicle:", vehicle.id, formData);
     try {
       await addDoc(collection(db, 'test_drives'), {
         ...formData,
@@ -291,9 +349,16 @@ const TestDriveForm = ({ vehicle, onClose }: { vehicle: Vehicle, onClose: () => 
         status: 'pending',
         createdAt: serverTimestamp()
       });
+      console.log("Test drive request submitted successfully!");
       setSubmitted(true);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'test_drives');
+    } catch (err: any) {
+      console.error("Test drive submission error:", err);
+      setError(t.errorSubmitting);
+      try {
+        handleFirestoreError(err, OperationType.WRITE, 'test_drives');
+      } catch (e) {}
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -380,9 +445,18 @@ const TestDriveForm = ({ vehicle, onClose }: { vehicle: Vehicle, onClose: () => 
             </div>
           </div>
         </div>
-        <button type="submit" className="w-full bg-electric-blue text-white font-black py-3 rounded-xl shadow-lg hover:scale-[1.02] transition-all flex items-center justify-center gap-2">
-          <Zap size={18} className="text-lemon-yellow" />
-          {t.submitRequest.toUpperCase()}
+        {error && (
+          <div className="p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-500 text-xs font-bold text-center">
+            {error}
+          </div>
+        )}
+        <button 
+          type="submit" 
+          disabled={loading}
+          className="w-full bg-electric-blue text-white font-black py-3 rounded-xl shadow-lg hover:scale-[1.02] transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Zap size={18} className={loading ? "animate-spin text-lemon-yellow" : "text-lemon-yellow"} />
+          {loading ? '...' : t.submitRequest.toUpperCase()}
         </button>
       </form>
     </div>
@@ -400,57 +474,189 @@ const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onIm
   const { t } = useContext(LanguageContext);
   const [newVehicle, setNewVehicle] = useState<Partial<Vehicle>>({
     model: 'L-5',
+    category: 'Passenger',
     range: '200 KM',
     batteryWarranty: '3 Years',
     vehicleWarranty: '1 Year'
   });
+  const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const editFileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, isEdit: boolean = false) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setNewVehicle({ ...newVehicle, imageUrl: reader.result as string });
+        if (isEdit && editingVehicle) {
+          setEditingVehicle({ ...editingVehicle, imageUrl: reader.result as string });
+        } else {
+          setNewVehicle({ ...newVehicle, imageUrl: reader.result as string });
+        }
       };
       reader.readAsDataURL(file);
     }
   };
 
   const addVehicle = async () => {
-    if (!newVehicle.name || !newVehicle.price) return;
-    if (!auth.currentUser) {
+    console.log("addVehicle called with:", newVehicle);
+    if (!newVehicle.name || !newVehicle.price || !newVehicle.category) {
+      alert("Please fill in Name, Price, and Category.");
+      return;
+    }
+    
+    if (!isOwner && !auth.currentUser) {
+      alert("User not authenticated. Cannot add vehicle.");
       console.error("User not authenticated. Cannot add vehicle.");
       return;
     }
+    
     try {
+      // Try backend API first if owner
+      if (isOwner) {
+        console.log("Attempting backend API add for vehicle");
+        const res = await fetch('/api/owner/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            password: '2122011',
+            collection: 'vehicles',
+            data: {
+              ...newVehicle,
+              createdAt: new Date().toISOString()
+            }
+          })
+        });
+
+        if (res.ok) {
+          console.log("Backend API add successful for vehicle");
+          alert("Vehicle added successfully via Backend API!");
+          setNewVehicle({
+            model: 'L-5',
+            category: 'Passenger',
+            range: '200 KM',
+            batteryWarranty: '3 Years',
+            vehicleWarranty: '1 Year'
+          });
+          if (fileInputRef.current) fileInputRef.current.value = '';
+          return;
+        } else {
+          const errData = await res.json();
+          console.warn("Backend API add failed with status:", res.status, errData);
+          // Don't alert yet, try fallback
+        }
+      }
+    } catch (error) {
+      console.warn("Backend API add failed, falling back to Firestore SDK:", error);
+    }
+
+    try {
+      console.log("Attempting Firestore SDK add for vehicle");
       const vehicleData = {
         ...newVehicle,
         createdAt: serverTimestamp()
       };
       await addDoc(collection(db, 'vehicles'), vehicleData);
+      console.log("Firestore SDK add successful for vehicle");
+      alert("Vehicle added successfully via Firestore SDK!");
       
       setNewVehicle({
         model: 'L-5',
+        category: 'Passenger',
         range: '200 KM',
         batteryWarranty: '3 Years',
         vehicleWarranty: '1 Year'
       });
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (error) {
+      console.error("Firestore SDK add failed:", error);
       handleFirestoreError(error, OperationType.WRITE, 'vehicles');
+      alert("Error adding vehicle. Check console for details.");
+    }
+  };
+
+  const updateVehicle = async () => {
+    if (!editingVehicle) return;
+    console.log("updateVehicle called with:", editingVehicle);
+    
+    try {
+      // Try backend API first if owner
+      if (isOwner) {
+        console.log("Attempting backend API update for vehicle:", editingVehicle.id);
+        const res = await fetch(`/api/owner/update/vehicles/${editingVehicle.id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            password: '2122011',
+            data: editingVehicle
+          })
+        });
+
+        if (res.ok) {
+          console.log("Backend API update successful for vehicle:", editingVehicle.id);
+          setEditingVehicle(null);
+          alert("Vehicle updated successfully!");
+          return;
+        } else {
+          const errData = await res.json();
+          console.error("Backend API update failed:", errData.error);
+          alert(`Update failed: ${errData.error || 'Unknown error'}`);
+        }
+      }
+    } catch (error) {
+      console.warn("Backend API update failed, falling back to Firestore SDK:", error);
+    }
+
+    try {
+      console.log("Attempting Firestore SDK update for vehicle:", editingVehicle.id);
+      const { id, ...data } = editingVehicle;
+      await updateDoc(doc(db, 'vehicles', id), data);
+      console.log("Firestore SDK update successful for vehicle:", editingVehicle.id);
+      setEditingVehicle(null);
+      alert("Vehicle updated successfully via SDK!");
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `vehicles/${editingVehicle.id}`);
+      alert("Error updating vehicle. Check console for details.");
     }
   };
 
   const removeVehicle = async (id: string) => {
-    if (!auth.currentUser) {
+    console.log("removeVehicle called for id:", id, "isOwner:", isOwner);
+    if (!isOwner && !auth.currentUser) {
       console.error("User not authenticated. Cannot delete vehicle.");
       return;
     }
+    
     try {
+      // Try backend API first if owner
+      if (isOwner) {
+        console.log("Attempting backend API delete for vehicle:", id);
+        const res = await fetch(`/api/owner/data/vehicles/${id}?password=2122011`, {
+          method: 'DELETE'
+        });
+
+        if (res.ok) {
+          console.log("Backend API delete successful for vehicle:", id);
+          alert("Vehicle deleted successfully!");
+          return;
+        } else {
+          console.warn("Backend API delete failed with status:", res.status);
+          const errData = await res.json();
+          alert(`Delete failed: ${errData.error || 'Unknown error'}`);
+        }
+      }
+    } catch (error) {
+      console.warn("Backend API delete failed, falling back to Firestore SDK:", error);
+    }
+
+    try {
+      console.log("Attempting Firestore SDK delete for vehicle:", id);
       await deleteDoc(doc(db, 'vehicles', id));
+      console.log("Firestore SDK delete successful for vehicle:", id);
+      alert("Vehicle deleted successfully via SDK!");
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `vehicles/${id}`);
+      alert("Error deleting vehicle. Check console for details.");
     }
   };
 
@@ -458,13 +664,49 @@ const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onIm
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {isOwner && (
         <div className="glass-panel p-8 rounded-2xl border border-white/10">
-          <h2 className="text-2xl font-bold text-glow-blue mb-6 flex items-center gap-2">
-            <Plus className="text-lemon-yellow" />
-            ADD NEW VEHICLE TYPE
-          </h2>
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-bold text-glow-blue flex items-center gap-2">
+              <Plus className="text-lemon-yellow" />
+              {t.addVehicle}
+            </h2>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  // This is a bit hacky since we don't have a direct way to change the parent's state
+                  // but we can use a custom event or just tell the user where to find it.
+                  // For now, I'll just add a button that switches the tab if possible.
+                  // Since VehicleManagement is a child of App, I'll need to pass the setActiveTab function.
+                  (window as any).setActiveTab?.('dashboard');
+                }}
+                className="text-[10px] bg-electric-blue text-white px-3 py-1 rounded font-bold hover:bg-electric-blue/80 transition-all flex items-center gap-1"
+              >
+                <ClipboardList size={12} />
+                VIEW QUOTATIONS
+              </button>
+              {vehicles.length === INITIAL_VEHICLES.length && vehicles.every(v => INITIAL_VEHICLES.some(iv => iv.id === v.id)) && (
+              <button
+                onClick={async () => {
+                  if (!confirm("This will save the initial fleet to the database. Continue?")) return;
+                  try {
+                    for (const v of INITIAL_VEHICLES) {
+                      const { id, ...data } = v;
+                      await addDoc(collection(db, 'vehicles'), { ...data, createdAt: serverTimestamp() });
+                    }
+                    alert("Fleet initialized successfully!");
+                  } catch (error) {
+                    handleFirestoreError(error, OperationType.WRITE, 'vehicles');
+                  }
+                }}
+                className="text-[10px] bg-lemon-yellow text-black px-3 py-1 rounded font-bold hover:bg-lemon-yellow/80 transition-all"
+              >
+                INITIALIZE FLEET IN DATABASE
+              </button>
+            )}
+            </div>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <div className="space-y-2">
-              <label className="text-xs uppercase tracking-widest text-white/40">Vehicle Name</label>
+              <label className="text-xs uppercase tracking-widest text-white/40">{t.vehicleName}</label>
               <input
                 type="text"
                 value={newVehicle.name || ''}
@@ -474,18 +716,39 @@ const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onIm
               />
             </div>
             <div className="space-y-2">
-              <label className="text-xs uppercase tracking-widest text-white/40">Model</label>
-              <select
-                value={newVehicle.model}
-                onChange={(e) => setNewVehicle({ ...newVehicle, model: e.target.value as 'L-3' | 'L-5' })}
+              <label className="text-xs uppercase tracking-widest text-white/40">{t.vehicleModel}</label>
+              <input
+                type="text"
+                list="models"
+                value={newVehicle.model || ''}
+                onChange={(e) => setNewVehicle({ ...newVehicle, model: e.target.value })}
                 className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 focus:border-electric-blue outline-none"
-              >
-                <option value="L-3">L-3</option>
-                <option value="L-5">L-5</option>
-              </select>
+                placeholder="e.g. L-5 or L-3"
+              />
+              <datalist id="models">
+                <option value="L-3" />
+                <option value="L-5" />
+              </datalist>
             </div>
             <div className="space-y-2">
-              <label className="text-xs uppercase tracking-widest text-white/40">Price</label>
+              <label className="text-xs uppercase tracking-widest text-white/40">{t.category}</label>
+              <input
+                type="text"
+                list="categories"
+                value={newVehicle.category || ''}
+                onChange={(e) => setNewVehicle({ ...newVehicle, category: e.target.value })}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 focus:border-electric-blue outline-none"
+                placeholder="e.g. Passenger"
+              />
+              <datalist id="categories">
+                <option value="Passenger" />
+                <option value="Cargo" />
+                <option value="Tipper" />
+                <option value="Loader" />
+              </datalist>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs uppercase tracking-widest text-white/40">{t.price}</label>
               <input
                 type="text"
                 value={newVehicle.price || ''}
@@ -495,7 +758,7 @@ const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onIm
               />
             </div>
             <div className="space-y-2">
-              <label className="text-xs uppercase tracking-widest text-white/40">Range</label>
+              <label className="text-xs uppercase tracking-widest text-white/40">{t.range}</label>
               <input
                 type="text"
                 value={newVehicle.range || ''}
@@ -504,7 +767,7 @@ const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onIm
               />
             </div>
             <div className="space-y-2">
-              <label className="text-xs uppercase tracking-widest text-white/40">Battery Warranty</label>
+              <label className="text-xs uppercase tracking-widest text-white/40">{t.batteryWarranty}</label>
               <input
                 type="text"
                 value={newVehicle.batteryWarranty || ''}
@@ -513,12 +776,12 @@ const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onIm
               />
             </div>
             <div className="space-y-2">
-              <label className="text-xs uppercase tracking-widest text-white/40">Vehicle Image</label>
+              <label className="text-xs uppercase tracking-widest text-white/40">{t.imageUrl}</label>
               <div className="flex gap-2">
                 <input
                   type="file"
                   ref={fileInputRef}
-                  onChange={handleImageUpload}
+                  onChange={(e) => handleImageUpload(e, false)}
                   accept="image/*"
                   className="hidden"
                 />
@@ -530,10 +793,19 @@ const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onIm
                   {newVehicle.imageUrl ? 'Image Selected' : 'Upload Image'}
                 </button>
                 {newVehicle.imageUrl && (
+                  <button
+                    onClick={() => setNewVehicle({ ...newVehicle, imageUrl: undefined })}
+                    className="p-2 bg-red-500/20 text-red-500 rounded-lg hover:bg-red-500/30 transition-all"
+                    title="Remove Image"
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+                {newVehicle.imageUrl ? (
                   <div className="w-10 h-10 rounded-lg overflow-hidden border border-white/10">
                     <img src={newVehicle.imageUrl} alt="Preview" className="w-full h-full object-cover" />
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
             <div className="flex items-end lg:col-span-3">
@@ -541,10 +813,132 @@ const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onIm
                 onClick={addVehicle}
                 className="w-full bg-electric-blue hover:bg-electric-blue/80 text-white font-bold py-3 rounded-lg transition-all shadow-[0_0_15px_rgba(0,123,255,0.3)]"
               >
-                ADD VEHICLE TO FLEET
+                {t.add.toUpperCase()}
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Edit Vehicle Modal */}
+      {editingVehicle && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="glass-panel w-full max-w-2xl p-8 rounded-3xl border border-white/10 relative"
+          >
+            <button 
+              onClick={() => setEditingVehicle(null)}
+              className="absolute top-6 right-6 text-white/40 hover:text-white transition-colors"
+            >
+              <X size={24} />
+            </button>
+            <h2 className="text-2xl font-bold mb-6 text-glow-blue flex items-center gap-2">
+              <Edit className="text-lemon-yellow" />
+              EDIT VEHICLE
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <label className="text-xs uppercase tracking-widest text-white/40">{t.vehicleName}</label>
+                <input
+                  type="text"
+                  value={editingVehicle.name}
+                  onChange={(e) => setEditingVehicle({ ...editingVehicle, name: e.target.value })}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 focus:border-electric-blue outline-none"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs uppercase tracking-widest text-white/40">{t.vehicleModel}</label>
+                <input
+                  type="text"
+                  list="edit-models"
+                  value={editingVehicle.model}
+                  onChange={(e) => setEditingVehicle({ ...editingVehicle, model: e.target.value })}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 focus:border-electric-blue outline-none"
+                />
+                <datalist id="edit-models">
+                  <option value="L-3" />
+                  <option value="L-5" />
+                </datalist>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs uppercase tracking-widest text-white/40">{t.category}</label>
+                <input
+                  type="text"
+                  list="edit-categories"
+                  value={editingVehicle.category}
+                  onChange={(e) => setEditingVehicle({ ...editingVehicle, category: e.target.value })}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 focus:border-electric-blue outline-none"
+                />
+                <datalist id="edit-categories">
+                  <option value="Passenger" />
+                  <option value="Cargo" />
+                  <option value="Tipper" />
+                  <option value="Loader" />
+                </datalist>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs uppercase tracking-widest text-white/40">{t.price}</label>
+                <input
+                  type="text"
+                  value={editingVehicle.price}
+                  onChange={(e) => setEditingVehicle({ ...editingVehicle, price: e.target.value })}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 focus:border-electric-blue outline-none"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs uppercase tracking-widest text-white/40">{t.range}</label>
+                <input
+                  type="text"
+                  value={editingVehicle.range}
+                  onChange={(e) => setEditingVehicle({ ...editingVehicle, range: e.target.value })}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 focus:border-electric-blue outline-none"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs uppercase tracking-widest text-white/40">{t.imageUrl}</label>
+                <div className="flex gap-2">
+                  <input
+                    type="file"
+                    ref={editFileInputRef}
+                    onChange={(e) => handleImageUpload(e, true)}
+                    accept="image/*"
+                    className="hidden"
+                  />
+                  <button
+                    onClick={() => editFileInputRef.current?.click()}
+                    className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2 hover:bg-white/10 transition-all flex items-center justify-center gap-2 text-sm"
+                  >
+                    {editingVehicle.imageUrl ? <ImageIcon size={16} className="text-lemon-yellow" /> : <Upload size={16} />}
+                    {editingVehicle.imageUrl ? 'Change Image' : 'Upload Image'}
+                  </button>
+                  {editingVehicle.imageUrl && (
+                    <button
+                      onClick={() => setEditingVehicle({ ...editingVehicle, imageUrl: undefined })}
+                      className="p-2 bg-red-500/20 text-red-500 rounded-lg hover:bg-red-500/30 transition-all"
+                      title="Remove Image"
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
+                  {editingVehicle.imageUrl ? (
+                    <div className="w-10 h-10 rounded-lg overflow-hidden border border-white/10">
+                      <img src={editingVehicle.imageUrl} alt="Preview" className="w-full h-full object-cover" />
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              <div className="flex items-end md:col-span-2">
+                <button
+                  onClick={updateVehicle}
+                  className="w-full bg-electric-blue hover:bg-electric-blue/80 text-white font-bold py-3 rounded-lg transition-all shadow-[0_0_15px_rgba(0,123,255,0.3)]"
+                >
+                  SAVE CHANGES
+                </button>
+              </div>
+            </div>
+          </motion.div>
         </div>
       )}
 
@@ -581,12 +975,22 @@ const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onIm
 
             <div className="p-6">
               {isOwner && (
-                <button
-                  onClick={() => removeVehicle(v.id)}
-                  className="absolute top-4 right-4 p-2 bg-black/50 backdrop-blur-md text-white/50 hover:text-red-500 transition-colors rounded-full opacity-0 group-hover:opacity-100"
-                >
-                  <Trash2 size={16} />
-                </button>
+                <div className="absolute top-4 right-4 flex gap-2 z-10">
+                  <button
+                    onClick={() => setEditingVehicle(v)}
+                    className="p-2 bg-black/50 backdrop-blur-md text-electric-blue hover:text-white transition-colors rounded-full shadow-lg"
+                    title="Edit Vehicle"
+                  >
+                    <Edit size={16} />
+                  </button>
+                  <button
+                    onClick={() => removeVehicle(v.id)}
+                    className="p-2 bg-black/50 backdrop-blur-md text-red-500/70 hover:text-red-500 transition-colors rounded-full shadow-lg"
+                    title="Delete Vehicle"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               )}
               
               <div className="flex items-center gap-3 mb-4">
@@ -637,7 +1041,7 @@ const VehicleManagement = ({ vehicles, onRequestQuotation, onBookTestDrive, onIm
 };
 
 // --- Owner Dashboard Component ---
-const OwnerDashboard = ({ user, userRole, loginWithGoogle }: { user: any, userRole: string, loginWithGoogle: () => void }) => {
+const OwnerDashboard = ({ user, userRole, loginWithGoogle, isOwner }: { user: any, userRole: string, loginWithGoogle: () => void, isOwner: boolean }) => {
   const { lang, t } = useContext(LanguageContext);
   const [quotations, setQuotations] = useState<any[]>([]);
   const [testDrives, setTestDrives] = useState<any[]>([]);
@@ -645,81 +1049,101 @@ const OwnerDashboard = ({ user, userRole, loginWithGoogle }: { user: any, userRo
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest');
   const [searchTerm, setSearchTerm] = useState('');
+  const [systemStatus, setSystemStatus] = useState<{ status: string, databaseId: string, message?: string } | null>(null);
 
   const isAdmin = userRole === 'admin';
 
+  const fetchSystemStatus = async () => {
+    try {
+      const res = await fetch('/api/owner/status');
+      const data = await res.json();
+      setSystemStatus(data);
+    } catch (error: any) {
+      setSystemStatus({ status: 'error', databaseId: 'unknown', message: error.message });
+    }
+  };
+
+  const fetchAdminData = async () => {
+    if (!isAdmin && !isOwner) return;
+    try {
+      // Try backend API first for owner login (no auth needed)
+      const [qRes, tRes] = await Promise.all([
+        fetch('/api/owner/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: '2122011', collection: 'quotations' })
+        }),
+        fetch('/api/owner/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: '2122011', collection: 'test_drives' })
+        })
+      ]);
+
+      if (qRes.ok && tRes.ok) {
+        const qData = await qRes.json();
+        const tData = await tRes.json();
+        setQuotations(qData);
+        setTestDrives(tData);
+      }
+    } catch (error) {
+      console.warn("Backend API fetch failed, falling back to Firestore SDK:", error);
+    }
+  };
+
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!isAdmin && !isOwner) return;
 
     let unsubscribeQ: () => void = () => {};
     let unsubscribeT: () => void = () => {};
 
-    const fetchAdminData = async () => {
-      try {
-        // Try backend API first for owner login (no auth needed)
-        const [qRes, tRes] = await Promise.all([
-          fetch('/api/owner/data', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: '2122011', collection: 'quotations' })
-          }),
-          fetch('/api/owner/data', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: '2122011', collection: 'test_drives' })
-          })
-        ]);
-
-        if (qRes.ok && tRes.ok) {
-          const qData = await qRes.json();
-          const tData = await tRes.json();
-          setQuotations(qData);
-          setTestDrives(tData);
-          return;
-        }
-      } catch (error) {
-        console.warn("Backend API fetch failed, falling back to Firestore SDK:", error);
-      }
-
+    const setupListeners = () => {
       // Fallback to Firestore SDK (requires auth)
-      const qQ = query(collection(db, 'quotations'), orderBy('createdAt', sortBy === 'newest' ? 'desc' : 'asc'));
-      unsubscribeQ = onSnapshot(qQ, (snapshot) => {
-        const list: any[] = [];
-        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
-        setQuotations(list);
-      }, (error) => {
-        if (error.code === 'permission-denied') {
-          console.warn("Permission denied for quotations. User might not be fully authenticated as admin.");
-        } else {
-          handleFirestoreError(error, OperationType.LIST, 'quotations');
-        }
-      });
+      if (isAdmin) {
+        const qQ = query(collection(db, 'quotations'), orderBy('createdAt', sortBy === 'newest' ? 'desc' : 'asc'));
+        unsubscribeQ = onSnapshot(qQ, (snapshot) => {
+          const list: any[] = [];
+          snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+          setQuotations(list);
+        }, (error) => {
+          if (error.code === 'permission-denied') {
+            console.warn("Permission denied for quotations. User might not be fully authenticated as admin.");
+          } else {
+            handleFirestoreError(error, OperationType.LIST, 'quotations');
+          }
+        });
 
-      const qT = query(collection(db, 'test_drives'), orderBy('createdAt', sortBy === 'newest' ? 'desc' : 'asc'));
-      unsubscribeT = onSnapshot(qT, (snapshot) => {
-        const list: any[] = [];
-        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
-        setTestDrives(list);
-      }, (error) => {
-        if (error.code === 'permission-denied') {
-          console.warn("Permission denied for test_drives. User might not be fully authenticated as admin.");
-        } else {
-          handleFirestoreError(error, OperationType.LIST, 'test_drives');
-        }
-      });
+        const qT = query(collection(db, 'test_drives'), orderBy('createdAt', sortBy === 'newest' ? 'desc' : 'asc'));
+        unsubscribeT = onSnapshot(qT, (snapshot) => {
+          const list: any[] = [];
+          snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+          setTestDrives(list);
+        }, (error) => {
+          if (error.code === 'permission-denied') {
+            console.warn("Permission denied for test_drives. User might not be fully authenticated as admin.");
+          } else {
+            handleFirestoreError(error, OperationType.LIST, 'test_drives');
+          }
+        });
+      }
     };
 
     fetchAdminData();
-    const interval = setInterval(fetchAdminData, 30000); // Refresh every 30s
+    fetchSystemStatus();
+    setupListeners();
+    const interval = setInterval(() => {
+      fetchAdminData();
+      fetchSystemStatus();
+    }, 30000); // Refresh every 30s
     
     return () => {
       clearInterval(interval);
       unsubscribeQ();
       unsubscribeT();
     };
-  }, [sortBy, isAdmin]);
+  }, [sortBy, isAdmin, isOwner, db]);
 
-  if (!isAdmin) {
+  if (!isAdmin && !isOwner) {
     return (
       <div className="max-w-4xl mx-auto py-20 px-6 text-center space-y-8">
         <div className="w-20 h-20 bg-lemon-yellow/20 rounded-full flex items-center justify-center mx-auto border border-lemon-yellow/30">
@@ -755,6 +1179,29 @@ const OwnerDashboard = ({ user, userRole, loginWithGoogle }: { user: any, userRo
 
   return (
     <div className="max-w-6xl mx-auto py-12 px-6 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {/* System Status Banner */}
+      {systemStatus && (
+        <div className={`p-4 rounded-xl border flex items-center justify-between ${
+          systemStatus.status === 'connected' 
+            ? 'bg-green-500/10 border-green-500/20 text-green-400' 
+            : 'bg-red-500/10 border-red-500/20 text-red-400'
+        }`}>
+          <div className="flex items-center gap-3">
+            <Activity className="w-5 h-5" />
+            <div>
+              <p className="text-sm font-bold">System Status: {systemStatus.status.toUpperCase()}</p>
+              <p className="text-[10px] opacity-70">Database: {systemStatus.databaseId} {systemStatus.message ? `| Error: ${systemStatus.message}` : ''}</p>
+            </div>
+          </div>
+          <button 
+            onClick={fetchSystemStatus}
+            className="text-[10px] bg-white/10 hover:bg-white/20 px-2 py-1 rounded transition-all"
+          >
+            REFRESH
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row justify-between items-center gap-6">
         <div className="space-y-1 text-center md:text-left">
           <h2 className="text-3xl font-black tracking-tighter uppercase italic text-glow-blue">{t.ownerDashboard}</h2>
@@ -794,15 +1241,24 @@ const OwnerDashboard = ({ user, userRole, loginWithGoogle }: { user: any, userRo
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
-        <select
-          className="bg-white/5 border border-white/10 rounded-xl py-3 px-4 focus:border-electric-blue outline-none text-sm"
-          value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
-        >
-          <option value="all" className="bg-black">{t.all} {t.status}</option>
-          <option value="pending" className="bg-black">{t.pending}</option>
-          <option value="completed" className="bg-black">{t.completed}</option>
-        </select>
+        <div className="flex gap-2">
+          <button
+            onClick={() => fetchAdminData()}
+            className="p-3 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-all text-white/60 hover:text-white"
+            title="Refresh Data"
+          >
+            <RefreshCw size={18} />
+          </button>
+          <select
+            className="bg-white/5 border border-white/10 rounded-xl py-3 px-4 focus:border-electric-blue outline-none text-sm"
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+          >
+            <option value="all" className="bg-black">{t.all} {t.status}</option>
+            <option value="pending" className="bg-black">{t.pending}</option>
+            <option value="completed" className="bg-black">{t.completed}</option>
+          </select>
+        </div>
         <select
           className="bg-white/5 border border-white/10 rounded-xl py-3 px-4 focus:border-electric-blue outline-none text-sm"
           value={sortBy}
@@ -844,7 +1300,10 @@ const OwnerDashboard = ({ user, userRole, loginWithGoogle }: { user: any, userRo
           </div>
           <div>
             <p className="text-[10px] text-white/40 uppercase tracking-widest">{t.activeInquiries}</p>
-            <p className="text-2xl font-black">{quotations.filter(q => q.status === 'pending').length + testDrives.filter(t => t.status === 'pending').length}</p>
+            <p className="text-2xl font-black">
+              {quotations.filter(q => q.status === 'pending').length + testDrives.filter(t => t.status === 'pending').length}
+              <span className="text-xs text-white/20 ml-2 font-normal">/ {quotations.length + testDrives.length} TOTAL</span>
+            </p>
           </div>
         </div>
       </div>
@@ -873,7 +1332,7 @@ const OwnerDashboard = ({ user, userRole, loginWithGoogle }: { user: any, userRo
                   <td className="px-6 py-4">
                     <div className="space-y-1">
                       <p className="font-bold text-sm">{item.vehicleName}</p>
-                      <p className="text-[10px] text-white/40 uppercase">{item.vehicleModel}</p>
+                      <p className="text-[10px] text-white/40 uppercase">{item.vehicleModel} • <span className="text-lemon-yellow">{item.vehiclePrice}</span></p>
                     </div>
                   </td>
                   <td className="px-6 py-4">
@@ -887,7 +1346,12 @@ const OwnerDashboard = ({ user, userRole, loginWithGoogle }: { user: any, userRo
                   </td>
                   <td className="px-6 py-4">
                     <p className="text-[10px] font-mono text-white/40">
-                      {item.createdAt?.toDate ? item.createdAt.toDate().toLocaleDateString() : 'N/A'}
+                      {(() => {
+                        if (!item.createdAt) return 'N/A';
+                        if (item.createdAt.toDate) return item.createdAt.toDate().toLocaleDateString();
+                        if (item.createdAt._seconds) return new Date(item.createdAt._seconds * 1000).toLocaleDateString();
+                        return new Date(item.createdAt).toLocaleDateString();
+                      })()}
                     </p>
                   </td>
                   <td className="px-6 py-4">
@@ -934,10 +1398,11 @@ const OwnerDashboard = ({ user, userRole, loginWithGoogle }: { user: any, userRo
                               handleFirestoreError(error, OperationType.UPDATE, `${activeView}/${item.id}`);
                             }
                           }}
-                          className="p-1 hover:bg-white/10 rounded text-white/40 hover:text-green-500 transition-colors"
-                          title="Mark as Completed"
+                          className="flex items-center gap-1 px-2 py-1 bg-green-500/10 hover:bg-green-500/20 rounded text-green-500 transition-colors text-[10px] font-bold"
+                          title={t.markCompleted}
                         >
-                          <CheckCircle size={14} />
+                          <CheckCircle size={12} />
+                          {t.markCompleted.toUpperCase()}
                         </button>
                       )}
                     </div>
@@ -1005,77 +1470,120 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
 }
 
 // --- Review Page Component ---
-function ReviewPage({ isOwner }: { isOwner: boolean }) {
+function ReviewPage({ isOwner, vehicles }: { isOwner: boolean, vehicles: Vehicle[] }) {
   const { t } = useContext(LanguageContext);
   const [reviews, setReviews] = useState<any[]>([]);
   const [newReview, setNewReview] = useState('');
   const [reviewerName, setReviewerName] = useState('');
   const [rating, setRating] = useState(5);
-  const [selectedVehicle, setSelectedVehicle] = useState(INITIAL_VEHICLES[0].id);
+  const [selectedVehicle, setSelectedVehicle] = useState(vehicles[0]?.id || INITIAL_VEHICLES[0].id);
 
   useEffect(() => {
-    const q = query(collection(db, 'reviews'), orderBy('createdAt', 'desc'), limit(20));
+    const q = query(collection(db, 'reviews'), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setReviews(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'reviews');
     });
     return () => unsubscribe();
-  }, []);
+  }, [db]);
 
   const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newReview.trim()) return;
 
+    console.log("Submitting review to database:", db.id || '(default)', {
+      text: newReview,
+      rating,
+      userName: reviewerName.trim() || 'Anonymous Customer',
+      vehicleId: selectedVehicle
+    });
+
     try {
+      console.log("Submitting review to database:", db.id || '(default)', {
+        userName: reviewerName.trim() || 'Anonymous Customer',
+        vehicleId: selectedVehicle,
+        rating
+      });
       await addDoc(collection(db, 'reviews'), {
         text: newReview,
         rating,
         userName: reviewerName.trim() || 'Anonymous Customer',
         vehicleId: selectedVehicle,
-        vehicleName: INITIAL_VEHICLES.find(v => v.id === selectedVehicle)?.name,
+        vehicleName: vehicles.find(v => v.id === selectedVehicle)?.name || INITIAL_VEHICLES.find(v => v.id === selectedVehicle)?.name,
         createdAt: serverTimestamp()
       });
+      console.log("Review submitted successfully!");
+      alert("Thank you for your review!");
       setNewReview('');
       setReviewerName('');
       setRating(5);
     } catch (error) {
+      console.error("Error submitting review:", error);
       handleFirestoreError(error, OperationType.CREATE, 'reviews');
+      alert("Failed to submit review. Please try again.");
     }
   };
 
   const handleDeleteReview = async (id: string) => {
-    if (!isOwner) return;
+    console.log("handleDeleteReview called for id:", id, "isOwner:", isOwner);
+    if (!isOwner) {
+      console.warn("Delete review aborted: User is not owner.");
+      alert("You must be an owner to delete reviews.");
+      return;
+    }
     try {
       // Try backend API first
-      const res = await fetch(`/api/owner/data/reviews/${id}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: '2122011' })
+      console.log("Attempting backend API delete for review:", id);
+      const res = await fetch(`/api/owner/data/reviews/${id}?password=2122011`, {
+        method: 'DELETE'
       });
 
       if (res.ok) {
+        console.log("Backend API delete successful for review:", id);
+        alert("Review deleted successfully!");
         // Refresh reviews
         const snapshot = await getDocs(query(collection(db, 'reviews'), orderBy('createdAt', 'desc')));
         setReviews(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         return;
+      } else {
+        const errData = await res.json();
+        console.error("Backend API delete failed:", errData.error);
+        alert(`Delete failed: ${errData.error || 'Unknown error'}`);
       }
     } catch (error) {
       console.warn("Backend API delete failed, falling back to Firestore SDK:", error);
     }
 
     try {
+      console.log("Attempting Firestore SDK delete for review:", id);
       await deleteDoc(doc(db, 'reviews', id));
+      console.log("Firestore SDK delete successful for review:", id);
+      alert("Review deleted successfully via SDK!");
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, 'reviews');
+      alert("Error deleting review. Check console for details.");
     }
   };
 
   return (
     <div className="max-w-4xl mx-auto py-12 px-6 space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="text-center space-y-4">
+      <div className="text-center space-y-4 relative">
         <h2 className="text-4xl font-black tracking-tighter uppercase italic text-glow-blue">{t.reviews}</h2>
-        <p className="text-white/40 font-mono text-xs tracking-widest uppercase">What our customers say about Garud</p>
+        <p className="text-white/40 font-mono text-xs tracking-widest uppercase">{t.customerFeedback}</p>
+        
+        <button 
+          onClick={() => {
+            const q = query(collection(db, 'reviews'), orderBy('createdAt', 'desc'));
+            getDocs(q).then(snapshot => {
+              setReviews(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+            });
+          }}
+          className="absolute right-0 top-1/2 -translate-y-1/2 p-2 bg-white/5 hover:bg-white/10 rounded-full transition-all text-white/40 hover:text-white"
+          title="Refresh Reviews"
+        >
+          <RefreshCw size={18} />
+        </button>
       </div>
 
       <div className="glass-panel p-8 rounded-3xl border border-white/10 space-y-6">
@@ -1098,7 +1606,7 @@ function ReviewPage({ isOwner }: { isOwner: boolean }) {
                 onChange={(e) => setSelectedVehicle(e.target.value)}
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:border-electric-blue outline-none transition-all text-sm"
               >
-                {INITIAL_VEHICLES.map(v => (
+                {vehicles.map(v => (
                   <option key={v.id} value={v.id} className="bg-zinc-900">{v.name}</option>
                 ))}
               </select>
@@ -1152,8 +1660,8 @@ function ReviewPage({ isOwner }: { isOwner: boolean }) {
             {isOwner && (
               <button 
                 onClick={() => handleDeleteReview(review.id)}
-                className="absolute top-4 right-4 p-2 text-white/20 hover:text-red-500 transition-colors"
-                title="Delete Review"
+                className="absolute top-4 right-4 p-2 text-red-500/50 hover:text-red-500 transition-colors z-10"
+                title={t.deleteReview}
               >
                 <Trash2 size={16} />
               </button>
@@ -1281,7 +1789,13 @@ const ComparisonModal = ({ vehicles, onClose }: { vehicles: Vehicle[], onClose: 
                   <th key={v.id} className="p-4 text-center border-b border-white/5 min-w-[200px]">
                     <div className="space-y-3">
                       <div className="aspect-video rounded-xl overflow-hidden border border-white/10">
-                        <img src={v.imageUrl} alt={v.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        {v.imageUrl ? (
+                          <img src={v.imageUrl} alt={v.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-white/10">
+                            <Car size={48} />
+                          </div>
+                        )}
                       </div>
                       <p className="font-black text-sm tracking-tight uppercase italic text-electric-blue">{v.name}</p>
                     </div>
@@ -1325,6 +1839,10 @@ function AppContent() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userRole, setUserRole] = useState<'admin' | 'viewer'>('viewer');
   const [activeTab, setActiveTab] = useState<'script' | 'vehicles' | 'contact' | 'reviews' | 'dashboard'>('script');
+
+  useEffect(() => {
+    (window as any).setActiveTab = setActiveTab;
+  }, []);
   const [lang, setLang] = useState<Language | null>(null);
   const [showLangSelector, setShowLangSelector] = useState(true);
   const [customerName, setCustomerName] = useState('');
@@ -1346,7 +1864,11 @@ function AppContent() {
 
   // Auth & Role Sync
   useEffect(() => {
-    testConnection();
+    const init = async () => {
+      await ensureConnection();
+      await testConnection();
+    };
+    init();
     
     // Load saved owner status
     const savedOwner = localStorage.getItem('garud_is_owner');
@@ -1387,13 +1909,18 @@ function AppContent() {
           const isOwnerEmail = firebaseUser.email === 'sarita.riusriu121212@gmail.com';
           
           if (userDoc.exists()) {
-            const role = isOwnerEmail ? 'admin' : userDoc.data().role;
-            // Respect saved owner status
-            if (savedIsOwner) {
+            const role = (isOwnerEmail || savedIsOwner) ? 'admin' : userDoc.data().role;
+            // Respect saved owner status OR if it's the owner email
+            if (savedIsOwner || isOwnerEmail) {
               setUserRole('admin');
               setIsOwner(true);
               setShowLangSelector(false);
               if (!lang) setLang('en');
+              
+              // If role is not admin in Firestore but it should be, update it
+              if (userDoc.data().role !== 'admin') {
+                await setDoc(userDocRef, { role: 'admin' }, { merge: true });
+              }
             } else {
               setUserRole(role);
               setIsOwner(role === 'admin');
@@ -1404,7 +1931,7 @@ function AppContent() {
             }
           } else {
             // New user
-            const role = isOwnerEmail ? 'admin' : 'viewer';
+            const role = (isOwnerEmail || savedIsOwner) ? 'admin' : 'viewer';
             const newUser = {
               displayName: firebaseUser.displayName || 'Anonymous',
               email: firebaseUser.email || '',
@@ -1413,7 +1940,7 @@ function AppContent() {
             };
             await setDoc(userDocRef, newUser);
             
-            if (savedIsOwner) {
+            if (savedIsOwner || isOwnerEmail) {
               setUserRole('admin');
               setIsOwner(true);
               setShowLangSelector(false);
@@ -1441,20 +1968,43 @@ function AppContent() {
       }
     });
     return () => unsubscribe();
-  }, [isOwner]);
+  }, [isOwner, db]);
 
   const handleOwnerLogin = async () => {
     if (ownerPassword === '2122011') {
       try {
         setAuthError(null);
-        // We no longer need Anonymous Auth as we use the backend API
+        // Sign in anonymously if not already logged in
+        let currentUser = auth.currentUser;
+        if (!currentUser) {
+          const cred = await signInAnonymously(auth);
+          currentUser = cred.user;
+        }
+        
+        // Update Firestore role to admin for this user
+        if (currentUser) {
+          const userDocRef = doc(db, "users", currentUser.uid);
+          const userDoc = await getDoc(userDocRef);
+          
+          if (!userDoc.exists()) {
+            await setDoc(userDocRef, {
+              displayName: currentUser.displayName || "Anonymous",
+              email: currentUser.email || "",
+              role: "admin",
+              photoURL: currentUser.photoURL || ""
+            });
+          } else {
+            await setDoc(userDocRef, { role: "admin" }, { merge: true });
+          }
+        }
+        
         setIsOwner(true);
         setUserRole('admin');
         setShowLangSelector(false);
         if (!lang) setLang('en');
         localStorage.setItem('garud_is_owner', 'true');
         setPasswordError(false);
-        console.log("Owner password correct. Dashboard access granted via backend API.");
+        console.log("Owner password correct. Dashboard access granted.");
       } catch (error: any) {
         console.error("Owner login error:", error);
         setAuthError(error.message || "Authentication failed.");
@@ -1474,14 +2024,14 @@ function AppContent() {
       snapshot.forEach((doc) => {
         vehicleList.push({ id: doc.id, ...doc.data() } as Vehicle);
       });
-      if (vehicleList.length > 0) {
-        setVehicles(vehicleList);
-      }
+      // If collection is empty, we show INITIAL_VEHICLES as a fallback
+      // but if it's NOT empty, we use the Firestore data.
+      setVehicles(vehicleList.length > 0 ? vehicleList : INITIAL_VEHICLES);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'vehicles');
     });
     return () => unsubscribe();
-  }, []);
+  }, [db]);
 
   const currentScene = COMMERCIAL_SCRIPT[currentSceneIndex];
 
@@ -1508,7 +2058,7 @@ function AppContent() {
       <div className="min-h-screen bg-black flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <Zap className="text-lemon-yellow w-12 h-12 animate-pulse" />
-          <p className="text-white/40 font-mono text-xs tracking-widest uppercase">Initializing Garud Systems...</p>
+          <p className="text-white/40 font-mono text-xs tracking-widest uppercase">{t.initializing}</p>
         </div>
       </div>
     );
@@ -1523,18 +2073,18 @@ function AppContent() {
             <Zap className="text-lemon-yellow w-8 h-8" />
           </div>
           <div className="space-y-2">
-            <h2 className="text-2xl font-black tracking-tighter uppercase italic">WELCOME TO GARUD</h2>
-            <p className="text-white/40 font-mono text-[10px] tracking-[0.2em] uppercase">Initial Setup Required</p>
+            <h2 className="text-2xl font-black tracking-tighter uppercase italic">{t.welcome}</h2>
+            <p className="text-white/40 font-mono text-[10px] tracking-[0.2em] uppercase">{t.initialSetup}</p>
           </div>
 
           <div className="space-y-4 text-left">
             <div className="space-y-1">
-              <label className="text-[10px] uppercase tracking-widest text-white/40 ml-1">Phone Number</label>
+              <label className="text-[10px] uppercase tracking-widest text-white/40 ml-1">{t.phone}</label>
               <div className="relative">
                 <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" size={14} />
                 <input 
                   type="tel" 
-                  placeholder="Enter your phone"
+                  placeholder={t.enterPhone}
                   className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-3 focus:border-electric-blue outline-none transition-all"
                   value={customerPhone}
                   onChange={e => setCustomerPhone(e.target.value)}
@@ -1542,12 +2092,12 @@ function AppContent() {
               </div>
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] uppercase tracking-widest text-white/40 ml-1">Full Name</label>
+              <label className="text-[10px] uppercase tracking-widest text-white/40 ml-1">{t.fullName}</label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" size={14} />
                 <input 
                   type="text" 
-                  placeholder="Enter your name"
+                  placeholder={t.enterName}
                   className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-3 focus:border-electric-blue outline-none transition-all"
                   value={customerName}
                   onChange={e => setCustomerName(e.target.value)}
@@ -1558,7 +2108,7 @@ function AppContent() {
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <p className="text-white/40 font-mono text-[10px] tracking-[0.2em] uppercase">STEP 2: SELECT YOUR LANGUAGE</p>
+              <p className="text-white/40 font-mono text-[10px] tracking-[0.2em] uppercase">{t.step2}</p>
               <div className="grid grid-cols-1 gap-3">
                 {[
                   { id: 'en', label: 'ENGLISH', sub: 'Global Standard' },
@@ -1591,11 +2141,11 @@ function AppContent() {
             </div>
             
             <div className="pt-6 border-t border-white/5 space-y-3">
-              <p className="text-white/20 font-mono text-[8px] tracking-[0.2em] uppercase mb-1 text-center">OWNER ACCESS</p>
+              <p className="text-white/20 font-mono text-[8px] tracking-[0.2em] uppercase mb-1 text-center">{t.ownerAccess}</p>
               <div className="flex gap-2">
                 <input 
                   type="password"
-                  placeholder="Enter Owner Password"
+                  placeholder={t.enterPassword}
                   className={`flex-1 bg-white/5 border ${passwordError ? 'border-red-500' : 'border-white/10'} rounded-xl px-4 py-3 focus:border-lemon-yellow outline-none transition-all text-sm`}
                   value={ownerPassword}
                   onChange={e => setOwnerPassword(e.target.value)}
@@ -1610,7 +2160,7 @@ function AppContent() {
               </div>
               {passwordError && (
                 <p className="text-red-500 text-[10px] uppercase font-bold text-center animate-pulse">
-                  {authError || "Invalid Password"}
+                  {authError || t.invalidPassword}
                 </p>
               )}
               {authError && (
@@ -1618,7 +2168,7 @@ function AppContent() {
                   <p className="font-bold mb-1">FIX REQUIRED:</p>
                   <p>1. Go to Firebase Console</p>
                   <p>2. Authentication &gt; Sign-in method</p>
-                  <p>3. Enable "Anonymous" provider</p>
+                  <p>{t.enableAnonymous}</p>
                 </div>
               )}
               {isOwner && !user && (
@@ -1627,7 +2177,7 @@ function AppContent() {
                   className="w-full bg-electric-blue hover:bg-electric-blue/80 text-white font-black px-4 py-3 rounded-xl flex items-center justify-center gap-2 transition-all mt-4"
                 >
                   <LogIn size={16} />
-                  LOGIN WITH GOOGLE TO ACCESS DASHBOARD
+                  {t.loginWithGoogle}
                 </button>
               )}
             </div>
@@ -1663,7 +2213,7 @@ function AppContent() {
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-tighter text-glow-blue">GARUD AUTOMOBILES</h1>
-            <p className="text-[10px] uppercase tracking-widest text-white/50">Commercial Script v1.0</p>
+            <p className="text-[10px] uppercase tracking-widest text-white/50">{t.commercialScript}</p>
           </div>
         </div>
         
@@ -1713,7 +2263,7 @@ function AppContent() {
                 OWNER LOGIN
               </button>
             )}
-            {isOwner && (
+            {(isOwner || userRole === 'admin') && (
               <button
                 onClick={() => setActiveTab('dashboard')}
                 className={`px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
@@ -1749,7 +2299,13 @@ function AppContent() {
                 <p className="text-xs font-bold">{user.displayName}</p>
                 <p className="text-[10px] text-white/40 uppercase tracking-widest">{userRole}</p>
               </div>
-              <img src={user.photoURL || ''} alt={user.displayName || ''} className="w-8 h-8 rounded-full border border-white/10" />
+              {user.photoURL ? (
+                <img src={user.photoURL} alt={user.displayName || ''} className="w-8 h-8 rounded-full border border-white/10" />
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-electric-blue/20 flex items-center justify-center border border-white/10">
+                  <User size={16} className="text-electric-blue" />
+                </div>
+              )}
               <button 
                 onClick={async () => {
                   await logout();
@@ -1768,7 +2324,11 @@ function AppContent() {
 
           {userRole === 'admin' && (
             <button
-              onClick={() => setIsOwner(!isOwner)}
+              onClick={() => {
+                const newIsOwner = !isOwner;
+                setIsOwner(newIsOwner);
+                localStorage.setItem('garud_is_owner', newIsOwner ? 'true' : 'false');
+              }}
               className={`p-2 rounded-full border transition-all ${
                 isOwner ? 'bg-lemon-yellow text-black border-lemon-yellow' : 'bg-white/5 text-white/50 border-white/10 hover:text-white'
               }`}
@@ -1933,15 +2493,21 @@ function AppContent() {
         ) : activeTab === 'vehicles' ? (
           <VehicleManagement 
             vehicles={vehicles} 
-            onRequestQuotation={(v) => setSelectedVehicleForQuotation(v)}
-            onBookTestDrive={(v) => setSelectedVehicleForTestDrive(v)}
+            onRequestQuotation={(v) => {
+              console.log("Quotation requested for:", v.name);
+              setSelectedVehicleForQuotation(v);
+            }}
+            onBookTestDrive={(v) => {
+              console.log("Test drive requested for:", v.name);
+              setSelectedVehicleForTestDrive(v);
+            }}
             onImageClick={(url) => setSelectedImage(url)}
             isOwner={isOwner}
           />
         ) : activeTab === 'reviews' ? (
-          <ReviewPage isOwner={isOwner} />
-        ) : (activeTab === 'dashboard' && isOwner) ? (
-          <OwnerDashboard user={user} userRole={userRole} loginWithGoogle={loginWithGoogle} />
+          <ReviewPage isOwner={isOwner} vehicles={vehicles} />
+        ) : (activeTab === 'dashboard' && (isOwner || userRole === 'admin')) ? (
+          <OwnerDashboard user={user} userRole={userRole} loginWithGoogle={loginWithGoogle} isOwner={isOwner} />
         ) : (
           <ContactPage />
         )}        {/* Modals */}
@@ -1968,6 +2534,7 @@ function AppContent() {
               >
                 <QuotationForm 
                   vehicle={selectedVehicleForQuotation} 
+                  vehicles={vehicles}
                   onClose={() => setSelectedVehicleForQuotation(null)}
                   onOpenFinance={() => setShowFinanceSheet(true)}
                 />
